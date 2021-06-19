@@ -1,0 +1,290 @@
+<!doctype html><html lang=zh-cn><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1"><title>比特币笔记 —— 哈希函数 | 毛珑珑的博客</title><meta property="og:title" content="比特币笔记 —— 哈希函数 - 毛珑珑的博客"><meta property="og:type" content="article"><meta property="article:published_time" content="2021-06-19T22:46:59+08:00"><meta property="article:modified_time" content="2021-06-19T22:46:59+08:00"><meta name=Keywords content><meta name=description content="比特币笔记 —— 哈希函数"><meta name=author content="毛珑珑"><meta property="og:url" content="https://maolonglong.github.io/post/blockchain/cryptographic-hash-functions/"><link rel="shortcut icon" href=/favicon.ico type=image/x-icon><link rel=stylesheet href=/css/normalize.css><link rel=stylesheet href=/css/style.css><script type=text/javascript src=//cdn.bootcdn.net/ajax/libs/jquery/3.4.1/jquery.min.js></script><link href=https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.css rel=stylesheet></head><body><header id=header class=clearfix><div class=container><div class=col-group><div class=site-name><a id=logo href=https://maolonglong.github.io>毛珑珑的博客</a><p class=description>只有非常努力，才能显得毫不费力</p></div><div><nav id=nav-menu class=clearfix><a class=current href=https://maolonglong.github.io>首页</a>
+<a href=https://maolonglong.github.io/archives/ title=归档>归档</a>
+<a href=https://maolonglong.github.io/about/ title=关于>关于</a></nav></div></div></div></header><div id=body><div class=container><div class=col-group><div class=col-8 id=main><div class=res-cons><article class=post><header><h1 class=post-title>比特币笔记 —— 哈希函数</h1></header><date class="post-meta meta-date">2021年6月19日</date><div class=post-meta><span>|</span>
+<span class=meta-category><a href=/categories/%E5%8C%BA%E5%9D%97%E9%93%BE>区块链</a></span></div><div class=post-content><p>比特币主要用到了密码学中的两个功能：</p><ol><li>哈希</li><li>签名</li></ol><p>密码学中用到的哈希函数被称为 <strong>cryptographic hash function</strong> ，它有 3 个重要的性质：</p><h2 id=collision-free-collision-resistance>collision free (collision resistance)</h2><blockquote><p>已知哈希函数 $H$，如果存在 $H(x)=H(y)$ 则称该现象为哈希碰撞</p></blockquote><p>注意这个性质不是 “无哈希碰撞” ，因为哈希函数的输出范围远没有输入范围大，碰撞是不可避免的。所以说成 collision resistance（抗哈希碰撞）更合适些，即无法<strong>人为</strong>制造哈希碰撞。</p><p>曾经的 MD5 也号称 collision free，但早已经被密码学专家研究出人为制造哈希碰撞的方法，具体可以参考 <a href=https://zh.wikipedia.org/wiki/MD5#%E7%BC%BA%E9%99%B7>维基百科</a></p><h2 id=hiding>hiding</h2><p>区分清楚<strong>哈希</strong>和<strong>加密</strong>的概念的话，hiding 就不难理解了，加密自然是有对应的解密方法，但是哈希函数的计算过程是单向的，不可逆的。hiding 性质前提是输入空间足够大，分布比较均匀。如果不是足够大，一般在 x 后面拼接一个随机数，如 $H(x \parallel nonce)$ 。</p><h2 id=puzzle-friendly>puzzle friendly</h2><p>puzzle friendly 是指挖矿过程中没有捷径，为了使输出值落在指定范围，只能一个一个去试。所以这个过程还可以作为工作量证明（proof of work）。</p><p>比特币挖矿的过程中实际就是找一个随机数 nonce，nonce 跟区块的块头（block header）里的其他信息合一起作为输入，得出的哈希值前 n 位都为 0。</p><h3 id=secure-hash-algorithm-2>Secure Hash Algorithm 2</h3><blockquote><p>比特币中使用的哈希算法 <a href=https://zh.wikipedia.org/zh/SHA-2>SHA256</a> 就满足了以上 3 个性质</p></blockquote><p>以下是摘自维基百科伪代码，与 golang 的简单实现：</p><pre><code>Note: All variables are unsigned 32 bits and wrap modulo 2^32 when calculating
+
+Initialize variables
+(first 32 bits of the fractional parts of the square roots of the first 8 primes 2..19):
+h0 := 0x6a09e667
+h1 := 0xbb67ae85
+h2 := 0x3c6ef372
+h3 := 0xa54ff53a
+h4 := 0x510e527f
+h5 := 0x9b05688c
+h6 := 0x1f83d9ab
+h7 := 0x5be0cd19
+
+Initialize table of round constants
+(first 32 bits of the fractional parts of the cube roots of the first 64 primes 2..311):
+k[0..63] :=
+   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+   0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+   0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+   0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+   0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+   0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+   0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+
+Pre-processing:
+append the bit '1' to the message
+append k bits '0', where k is the minimum number &gt;= 0 such that the resulting message
+    length (in bits) is congruent to 448(mod 512)
+append length of message (before pre-processing), in bits, as 64-bit big-endian integer
+
+Process the message in successive 512-bit chunks:
+break message into 512-bit chunks
+for each chunk
+    break chunk into sixteen 32-bit big-endian words w[0..15]
+
+    Extend the sixteen 32-bit words into sixty-four 32-bit words:
+    for i from 16 to 63
+        s0 := (w[i-15] rightrotate 7) xor (w[i-15] rightrotate 18) xor(w[i-15] rightshift 3)
+        s1 := (w[i-2] rightrotate 17) xor (w[i-2] rightrotate 19) xor(w[i-2] rightshift 10)
+        w[i] := w[i-16] + s0 + w[i-7] + s1
+
+    Initialize hash value for this chunk:
+    a := h0
+    b := h1
+    c := h2
+    d := h3
+    e := h4
+    f := h5
+    g := h6
+    h := h7
+
+    Main loop:
+    for i from 0 to 63
+        s0 := (a rightrotate 2) xor (a rightrotate 13) xor(a rightrotate 22)
+        maj := (a and b) xor (a and c) xor(b and c)
+        t2 := s0 + maj
+        s1 := (e rightrotate 6) xor (e rightrotate 11) xor(e rightrotate 25)
+        ch := (e and f) xor ((not e) and g)
+        t1 := h + s1 + ch + k[i] + w[i]
+        h := g
+        g := f
+        f := e
+        e := d + t1
+        d := c
+        c := b
+        b := a
+        a := t1 + t2
+
+    Add this chunk's hash to result so far:
+    h0 := h0 + a
+    h1 := h1 + b
+    h2 := h2 + c
+    h3 := h3 + d
+    h4 := h4 + e
+    h5 := h5 + f
+    h6 := h6 + g
+    h7 := h7 + h
+
+Produce the final hash value (big-endian):
+digest = hash = h0 append h1 append h2 append h3 append h4 append h5 append h6 append h7
+</code></pre><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">36
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">37
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">38
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">39
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">40
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">41
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">42
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">43
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">44
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">45
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">46
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">47
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">48
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">49
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">50
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">51
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">52
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">53
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">54
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">55
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">56
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">57
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">58
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">59
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">60
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">61
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">62
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">63
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">64
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">65
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">66
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">67
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">68
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">69
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">70
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">71
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">72
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">73
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">74
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">75
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">76
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">77
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">78
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">79
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">80
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">81
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">82
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">83
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">84
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">85
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">86
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">87
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">88
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">89
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">90
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">91
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">92
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">93
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">94
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">95
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">96
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">97
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">98
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>sha256</span>(b []<span style=color:#458;font-weight:700>byte</span>) [<span style=color:#099>32</span>]<span style=color:#458;font-weight:700>byte</span> {
+
+	h0 <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint32</span>(<span style=color:#099>0x6a09e667</span>)
+	h1 <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint32</span>(<span style=color:#099>0xbb67ae85</span>)
+	h2 <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint32</span>(<span style=color:#099>0x3c6ef372</span>)
+	h3 <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint32</span>(<span style=color:#099>0xa54ff53a</span>)
+	h4 <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint32</span>(<span style=color:#099>0x510e527f</span>)
+	h5 <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint32</span>(<span style=color:#099>0x9b05688c</span>)
+	h6 <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint32</span>(<span style=color:#099>0x1f83d9ab</span>)
+	h7 <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint32</span>(<span style=color:#099>0x5be0cd19</span>)
+
+	k <span style=color:#000;font-weight:700>:=</span> [<span style=color:#099>64</span>]<span style=color:#458;font-weight:700>uint32</span>{
+		<span style=color:#099>0x428a2f98</span>, <span style=color:#099>0x71374491</span>, <span style=color:#099>0xb5c0fbcf</span>, <span style=color:#099>0xe9b5dba5</span>, <span style=color:#099>0x3956c25b</span>, <span style=color:#099>0x59f111f1</span>, <span style=color:#099>0x923f82a4</span>, <span style=color:#099>0xab1c5ed5</span>,
+		<span style=color:#099>0xd807aa98</span>, <span style=color:#099>0x12835b01</span>, <span style=color:#099>0x243185be</span>, <span style=color:#099>0x550c7dc3</span>, <span style=color:#099>0x72be5d74</span>, <span style=color:#099>0x80deb1fe</span>, <span style=color:#099>0x9bdc06a7</span>, <span style=color:#099>0xc19bf174</span>,
+		<span style=color:#099>0xe49b69c1</span>, <span style=color:#099>0xefbe4786</span>, <span style=color:#099>0x0fc19dc6</span>, <span style=color:#099>0x240ca1cc</span>, <span style=color:#099>0x2de92c6f</span>, <span style=color:#099>0x4a7484aa</span>, <span style=color:#099>0x5cb0a9dc</span>, <span style=color:#099>0x76f988da</span>,
+		<span style=color:#099>0x983e5152</span>, <span style=color:#099>0xa831c66d</span>, <span style=color:#099>0xb00327c8</span>, <span style=color:#099>0xbf597fc7</span>, <span style=color:#099>0xc6e00bf3</span>, <span style=color:#099>0xd5a79147</span>, <span style=color:#099>0x06ca6351</span>, <span style=color:#099>0x14292967</span>,
+		<span style=color:#099>0x27b70a85</span>, <span style=color:#099>0x2e1b2138</span>, <span style=color:#099>0x4d2c6dfc</span>, <span style=color:#099>0x53380d13</span>, <span style=color:#099>0x650a7354</span>, <span style=color:#099>0x766a0abb</span>, <span style=color:#099>0x81c2c92e</span>, <span style=color:#099>0x92722c85</span>,
+		<span style=color:#099>0xa2bfe8a1</span>, <span style=color:#099>0xa81a664b</span>, <span style=color:#099>0xc24b8b70</span>, <span style=color:#099>0xc76c51a3</span>, <span style=color:#099>0xd192e819</span>, <span style=color:#099>0xd6990624</span>, <span style=color:#099>0xf40e3585</span>, <span style=color:#099>0x106aa070</span>,
+		<span style=color:#099>0x19a4c116</span>, <span style=color:#099>0x1e376c08</span>, <span style=color:#099>0x2748774c</span>, <span style=color:#099>0x34b0bcb5</span>, <span style=color:#099>0x391c0cb3</span>, <span style=color:#099>0x4ed8aa4a</span>, <span style=color:#099>0x5b9cca4f</span>, <span style=color:#099>0x682e6ff3</span>,
+		<span style=color:#099>0x748f82ee</span>, <span style=color:#099>0x78a5636f</span>, <span style=color:#099>0x84c87814</span>, <span style=color:#099>0x8cc70208</span>, <span style=color:#099>0x90befffa</span>, <span style=color:#099>0xa4506ceb</span>, <span style=color:#099>0xbef9a3f7</span>, <span style=color:#099>0xc67178f2</span>}
+
+	padded <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>append</span>(b, <span style=color:#099>0x80</span>)
+	<span style=color:#000;font-weight:700>if</span> <span style=color:#0086b3>len</span>(padded)<span style=color:#000;font-weight:700>%</span><span style=color:#099>64</span> &lt; <span style=color:#099>56</span> {
+		padded = <span style=color:#0086b3>append</span>(padded, <span style=color:#0086b3>make</span>([]<span style=color:#458;font-weight:700>byte</span>, <span style=color:#099>56</span><span style=color:#000;font-weight:700>-</span><span style=color:#0086b3>len</span>(padded)<span style=color:#000;font-weight:700>%</span><span style=color:#099>64</span>)<span style=color:#000;font-weight:700>...</span>)
+	} <span style=color:#000;font-weight:700>else</span> {
+		padded = <span style=color:#0086b3>append</span>(padded, <span style=color:#0086b3>make</span>([]<span style=color:#458;font-weight:700>byte</span>, <span style=color:#099>56</span><span style=color:#000;font-weight:700>+</span><span style=color:#099>64</span><span style=color:#000;font-weight:700>-</span><span style=color:#0086b3>len</span>(padded)<span style=color:#000;font-weight:700>%</span><span style=color:#099>64</span>)<span style=color:#000;font-weight:700>...</span>)
+	}
+
+	<span style=color:#000;font-weight:700>var</span> l [<span style=color:#099>8</span>]<span style=color:#458;font-weight:700>byte</span>
+	binary.BigEndian.<span style=color:#900;font-weight:700>PutUint64</span>(l[:], <span style=color:#0086b3>uint64</span>(<span style=color:#0086b3>len</span>(b)<span style=color:#000;font-weight:700>*</span><span style=color:#099>8</span>))
+	padded = <span style=color:#0086b3>append</span>(padded, l[:]<span style=color:#000;font-weight:700>...</span>)
+
+	n <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>len</span>(padded) <span style=color:#000;font-weight:700>/</span> <span style=color:#099>64</span>
+	<span style=color:#000;font-weight:700>for</span> t <span style=color:#000;font-weight:700>:=</span> <span style=color:#099>0</span>; t &lt; n; t<span style=color:#000;font-weight:700>++</span> {
+		chunk <span style=color:#000;font-weight:700>:=</span> padded[t<span style=color:#000;font-weight:700>*</span><span style=color:#099>64</span> : t<span style=color:#000;font-weight:700>*</span><span style=color:#099>64</span><span style=color:#000;font-weight:700>+</span><span style=color:#099>64</span>]
+
+		<span style=color:#000;font-weight:700>var</span> w [<span style=color:#099>64</span>]<span style=color:#458;font-weight:700>uint32</span>
+		<span style=color:#000;font-weight:700>for</span> i <span style=color:#000;font-weight:700>:=</span> <span style=color:#099>0</span>; i &lt; <span style=color:#099>16</span>; i<span style=color:#000;font-weight:700>++</span> {
+			w[i] = binary.BigEndian.<span style=color:#900;font-weight:700>Uint32</span>(chunk[i<span style=color:#000;font-weight:700>*</span><span style=color:#099>4</span> : i<span style=color:#000;font-weight:700>*</span><span style=color:#099>4</span><span style=color:#000;font-weight:700>+</span><span style=color:#099>4</span>])
+		}
+
+		<span style=color:#000;font-weight:700>for</span> i <span style=color:#000;font-weight:700>:=</span> <span style=color:#099>16</span>; i &lt; <span style=color:#099>64</span>; i<span style=color:#000;font-weight:700>++</span> {
+			s0 <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>rightRotate</span>(w[i<span style=color:#000;font-weight:700>-</span><span style=color:#099>15</span>], <span style=color:#099>7</span>) ^ <span style=color:#900;font-weight:700>rightRotate</span>(w[i<span style=color:#000;font-weight:700>-</span><span style=color:#099>15</span>], <span style=color:#099>18</span>) ^ (w[i<span style=color:#000;font-weight:700>-</span><span style=color:#099>15</span>] <span style=color:#000;font-weight:700>&gt;&gt;</span> <span style=color:#099>3</span>)
+			s1 <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>rightRotate</span>(w[i<span style=color:#000;font-weight:700>-</span><span style=color:#099>2</span>], <span style=color:#099>17</span>) ^ <span style=color:#900;font-weight:700>rightRotate</span>(w[i<span style=color:#000;font-weight:700>-</span><span style=color:#099>2</span>], <span style=color:#099>19</span>) ^ (w[i<span style=color:#000;font-weight:700>-</span><span style=color:#099>2</span>] <span style=color:#000;font-weight:700>&gt;&gt;</span> <span style=color:#099>10</span>)
+			w[i] = w[i<span style=color:#000;font-weight:700>-</span><span style=color:#099>16</span>] <span style=color:#000;font-weight:700>+</span> s0 <span style=color:#000;font-weight:700>+</span> w[i<span style=color:#000;font-weight:700>-</span><span style=color:#099>7</span>] <span style=color:#000;font-weight:700>+</span> s1
+		}
+
+		a <span style=color:#000;font-weight:700>:=</span> h0
+		b <span style=color:#000;font-weight:700>:=</span> h1
+		c <span style=color:#000;font-weight:700>:=</span> h2
+		d <span style=color:#000;font-weight:700>:=</span> h3
+		e <span style=color:#000;font-weight:700>:=</span> h4
+		f <span style=color:#000;font-weight:700>:=</span> h5
+		g <span style=color:#000;font-weight:700>:=</span> h6
+		h <span style=color:#000;font-weight:700>:=</span> h7
+
+		<span style=color:#000;font-weight:700>for</span> i <span style=color:#000;font-weight:700>:=</span> <span style=color:#099>0</span>; i &lt; <span style=color:#099>64</span>; i<span style=color:#000;font-weight:700>++</span> {
+			s0 <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>rightRotate</span>(a, <span style=color:#099>2</span>) ^ <span style=color:#900;font-weight:700>rightRotate</span>(a, <span style=color:#099>13</span>) ^ <span style=color:#900;font-weight:700>rightRotate</span>(a, <span style=color:#099>22</span>)
+			maj <span style=color:#000;font-weight:700>:=</span> (a <span style=color:#000;font-weight:700>&amp;</span> b) ^ (a <span style=color:#000;font-weight:700>&amp;</span> c) ^ (b <span style=color:#000;font-weight:700>&amp;</span> c)
+			t2 <span style=color:#000;font-weight:700>:=</span> s0 <span style=color:#000;font-weight:700>+</span> maj
+			s1 <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>rightRotate</span>(e, <span style=color:#099>6</span>) ^ <span style=color:#900;font-weight:700>rightRotate</span>(e, <span style=color:#099>11</span>) ^ <span style=color:#900;font-weight:700>rightRotate</span>(e, <span style=color:#099>25</span>)
+			ch <span style=color:#000;font-weight:700>:=</span> (e <span style=color:#000;font-weight:700>&amp;</span> f) ^ ((^e) <span style=color:#000;font-weight:700>&amp;</span> g)
+			t1 <span style=color:#000;font-weight:700>:=</span> h <span style=color:#000;font-weight:700>+</span> s1 <span style=color:#000;font-weight:700>+</span> ch <span style=color:#000;font-weight:700>+</span> k[i] <span style=color:#000;font-weight:700>+</span> w[i]
+			h = g
+			g = f
+			f = e
+			e = d <span style=color:#000;font-weight:700>+</span> t1
+			d = c
+			c = b
+			b = a
+			a = t1 <span style=color:#000;font-weight:700>+</span> t2
+		}
+
+		h0 <span style=color:#000;font-weight:700>+=</span> a
+		h1 <span style=color:#000;font-weight:700>+=</span> b
+		h2 <span style=color:#000;font-weight:700>+=</span> c
+		h3 <span style=color:#000;font-weight:700>+=</span> d
+		h4 <span style=color:#000;font-weight:700>+=</span> e
+		h5 <span style=color:#000;font-weight:700>+=</span> f
+		h6 <span style=color:#000;font-weight:700>+=</span> g
+		h7 <span style=color:#000;font-weight:700>+=</span> h
+	}
+
+	<span style=color:#000;font-weight:700>var</span> digest [<span style=color:#099>32</span>]<span style=color:#458;font-weight:700>byte</span>
+	binary.BigEndian.<span style=color:#900;font-weight:700>PutUint32</span>(digest[<span style=color:#099>0</span>:], h0)
+	binary.BigEndian.<span style=color:#900;font-weight:700>PutUint32</span>(digest[<span style=color:#099>4</span>:], h1)
+	binary.BigEndian.<span style=color:#900;font-weight:700>PutUint32</span>(digest[<span style=color:#099>8</span>:], h2)
+	binary.BigEndian.<span style=color:#900;font-weight:700>PutUint32</span>(digest[<span style=color:#099>12</span>:], h3)
+	binary.BigEndian.<span style=color:#900;font-weight:700>PutUint32</span>(digest[<span style=color:#099>16</span>:], h4)
+	binary.BigEndian.<span style=color:#900;font-weight:700>PutUint32</span>(digest[<span style=color:#099>20</span>:], h5)
+	binary.BigEndian.<span style=color:#900;font-weight:700>PutUint32</span>(digest[<span style=color:#099>24</span>:], h6)
+	binary.BigEndian.<span style=color:#900;font-weight:700>PutUint32</span>(digest[<span style=color:#099>28</span>:], h7)
+	<span style=color:#000;font-weight:700>return</span> digest
+}
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>rightRotate</span>(x, n <span style=color:#458;font-weight:700>uint32</span>) <span style=color:#458;font-weight:700>uint32</span> {
+	<span style=color:#000;font-weight:700>return</span> (x <span style=color:#000;font-weight:700>&gt;&gt;</span> n) | (x <span style=color:#000;font-weight:700>&lt;&lt;</span> (<span style=color:#099>32</span> <span style=color:#000;font-weight:700>-</span> n))
+}
+</code></pre></td></tr></table></div></div></div><div class=post-archive><h2>See Also</h2><ul class=listing><li><a href=/post/golang/unsafe/>Unsafe Go</a></li><li><a href=/about/>关于</a></li><li><a href=/post/%E7%94%9F%E6%B4%BB/%E6%96%B0%E7%9A%84%E5%BC%80%E5%A7%8B/>新的开始</a></li><li><a href=/post/java/reentrant-lock/>【Java 并发】重入锁（ReentrantLock）</a></li><li><a href=/post/java/volatile/>【Java 并发】volatile 关键字基本理解与使用</a></li></ul></div><div class="post-meta meta-tags"><ul class=clearfix><li><a href=/tags/Bitcoin>Bitcoin</a></li><li><a href=/tags/SHA256>SHA256</a></li></ul></div></article><div class="post bg-white"><script src=https://utteranc.es/client.js repo=MaoLongLong/maolonglong.github.io issue-term=pathname theme=github-light crossorigin=anonymous async></script></div></div><footer id=footer><div>&copy; 2021 <a href=https://maolonglong.github.io>毛珑珑的博客 By 毛珑珑</a></div><br><div><div class=github-badge><a href=https://gohugo.io/ target=_black rel=nofollow><span class=badge-subject>Powered by</span><span class="badge-value bg-blue">Hugo</span></a></div><div class=github-badge><a href=https://www.flysnow.org/ target=_black><span class=badge-subject>Design by</span><span class="badge-value bg-brightgreen">飞雪无情</span></a></div><div class=github-badge><a href=https://github.com/flysnow-org/maupassant-hugo target=_black><span class=badge-subject>Theme</span><span class="badge-value bg-yellowgreen">Maupassant</span></a></div></div></footer><script type=text/javascript>window.MathJax={tex2jax:{inlineMath:[['$','$']],processEscapes:!0}}</script><script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML" async></script><script src=https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.js></script><a id=rocket href=#top></a><script type=text/javascript src="/js/totop.js?v=0.0.0" async></script></div><div id=secondary><section class=widget><form id=search action=https://maolonglong.github.io/search/ method=get accept-charset=utf-8 target=_blank _lpchecked=1><input type=text name=q maxlength=20 placeholder=Search>
+<input type=hidden name=sitesearch value=https://maolonglong.github.io>
+<button type=submit class="submit icon-search"></button></form></section><section class=widget><h3 class=widget-title>最近文章</h3><ul class=widget-list><li><a href=https://maolonglong.github.io/post/blockchain/cryptographic-hash-functions/ title="比特币笔记 —— 哈希函数">比特币笔记 —— 哈希函数</a></li><li><a href=https://maolonglong.github.io/post/golang/unsafe/ title="Unsafe Go">Unsafe Go</a></li><li><a href=https://maolonglong.github.io/post/%E7%94%9F%E6%B4%BB/%E6%96%B0%E7%9A%84%E5%BC%80%E5%A7%8B/ title=新的开始>新的开始</a></li><li><a href=https://maolonglong.github.io/post/java/reentrant-lock/ title="【Java 并发】重入锁（ReentrantLock）">【Java 并发】重入锁（ReentrantLock）</a></li><li><a href=https://maolonglong.github.io/post/java/volatile/ title="【Java 并发】volatile 关键字基本理解与使用">【Java 并发】volatile 关键字基本理解与使用</a></li></ul></section><section class=widget><h3 class=widget-title><a href=/categories/>分类</a></h3><ul class=widget-list><li><a href=https://maolonglong.github.io/categories/Golang/>Golang (1)</a></li><li><a href=https://maolonglong.github.io/categories/Java/>Java (2)</a></li><li><a href=https://maolonglong.github.io/categories/%E5%8C%BA%E5%9D%97%E9%93%BE/>区块链 (1)</a></li><li><a href=https://maolonglong.github.io/categories/%E7%94%9F%E6%B4%BB/>生活 (1)</a></li></ul></section><section class=widget><h3 class=widget-title><a href=/tags/>标签</a></h3><div class=tagcloud><a href=https://maolonglong.github.io/tags/Bitcoin/>Bitcoin</a>
+<a href=https://maolonglong.github.io/tags/ReentrantLock/>ReentrantLock</a>
+<a href=https://maolonglong.github.io/tags/SHA256/>SHA256</a>
+<a href=https://maolonglong.github.io/tags/unsafe/>unsafe</a>
+<a href=https://maolonglong.github.io/tags/volatile/>volatile</a>
+<a href=https://maolonglong.github.io/tags/%E5%AE%9E%E4%B9%A0/>实习</a>
+<a href=https://maolonglong.github.io/tags/%E5%B9%B6%E5%8F%91/>并发</a>
+<a href=https://maolonglong.github.io/tags/%E7%AB%9E%E8%B5%9B/>竞赛</a></div></section><section class=widget><h3 class=widget-title>友情链接</h3><ul class=widget-list><li><a target=_blank href=https://www.flysnow.org/ title=飞雪无情的博客>飞雪无情的博客</a></li></ul></section><section class=widget><h3 class=widget-title>其它</h3><ul class=widget-list><li><a href=https://maolonglong.github.io/index.xml>文章 RSS</a></li></ul></section></div></div></div></div></body></html>
