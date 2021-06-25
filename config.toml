@@ -47,10 +47,10 @@ disqusShortname = ""  ## 是否开启disqus评论，不要和utteranc同时开�
 
 ## 友情链接，可以多个
 
-[[params.links]]
-  title = "飞雪无情的博客"
-  name = "飞雪无情的博客"
-  url = "https://www.flysnow.org/"
+# [[params.links]]
+#   title = "飞雪无情的博客"
+#   name = "飞雪无情的博客"
+#   url = "https://www.flysnow.org/"
 
 # [[params.links]]
 #   title = "Android Gradle权威指南"
