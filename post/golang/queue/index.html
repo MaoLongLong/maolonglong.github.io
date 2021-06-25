@@ -1,0 +1,227 @@
+<!doctype html><html lang=zh-cn><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1"><title>无锁队列的简单实现 | 毛珑珑的博客</title><meta property="og:title" content="无锁队列的简单实现 - 毛珑珑的博客"><meta property="og:type" content="article"><meta property="article:published_time" content="2021-06-25T18:31:06+08:00"><meta property="article:modified_time" content="2021-06-25T18:31:06+08:00"><meta name=Keywords content><meta name=description content="无锁队列的简单实现"><meta name=author content="毛珑珑"><meta property="og:url" content="https://maolonglong.github.io/post/golang/queue/"><link rel="shortcut icon" href=/favicon.ico type=image/x-icon><link rel=stylesheet href=/css/normalize.css><link rel=stylesheet href=/css/style.css><script type=text/javascript src=//cdn.bootcdn.net/ajax/libs/jquery/3.4.1/jquery.min.js></script><link href=https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.css rel=stylesheet></head><body><header id=header class=clearfix><div class=container><div class=col-group><div class=site-name><a id=logo href=https://maolonglong.github.io>毛珑珑的博客</a><p class=description>只有非常努力，才能显得毫不费力</p></div><div><nav id=nav-menu class=clearfix><a class=current href=https://maolonglong.github.io>首页</a>
+<a href=https://maolonglong.github.io/archives/ title=归档>归档</a>
+<a href=https://maolonglong.github.io/about/ title=关于>关于</a></nav></div></div></div></header><div id=body><div class=container><div class=col-group><div class=col-8 id=main><div class=res-cons><style type=text/css>.post-toc{position:fixed;width:200px;margin-left:-210px;padding:5px 10px;font-family:Athelas,STHeiti,Microsoft Yahei,serif;font-size:12px;border:1px solid rgba(0,0,0,7%);border-radius:5px;background-color:rgba(255,255,255,.98);background-clip:padding-box;-webkit-box-shadow:1px 1px 2px rgba(0,0,0,.125);box-shadow:1px 1px 2px rgba(0,0,0,.125);word-wrap:break-word;white-space:nowrap;-webkit-box-sizing:border-box;box-sizing:border-box;z-index:999;cursor:pointer;max-height:70%;overflow-y:auto;overflow-x:hidden}.post-toc .post-toc-title{width:100%;margin:0 auto;font-size:20px;font-weight:400;text-transform:uppercase;text-align:center}.post-toc .post-toc-content{font-size:15px}.post-toc .post-toc-content>nav>ul{margin:10px 0}.post-toc .post-toc-content ul{padding-left:20px;list-style:square;margin:.5em;line-height:1.8em}.post-toc .post-toc-content ul ul{padding-left:15px;display:none}@media print,screen and (max-width:1057px){.post-toc{display:none}}</style><div class=post-toc style=position:absolute;top:188px><h2 class=post-toc-title>文章目录</h2><div class=post-toc-content><nav id=TableOfContents><ul><li><a href=#伪代码>伪代码</a></li><li><a href=#实现>实现</a></li><li><a href=#benchmark>Benchmark</a></li></ul></nav></div></div><script type=text/javascript>$(document).ready(function(){var a=$(".post-toc"),b,c,d;a.length&&(b=$("#main").offset().left,b<220&&a.css({width:b-10,"margin-left":0-b}),c=a.offset().top-20,d={start:{position:"absolute",top:c},process:{position:"fixed",top:20}},$(window).scroll(function(){var b=$(window).scrollTop();b<c?a.css(d.start):a.css(d.process)}))})</script><article class=post><header><h1 class=post-title>无锁队列的简单实现</h1></header><date class="post-meta meta-date">2021年6月25日</date><div class=post-meta><span>|</span>
+<span class=meta-category><a href=/categories/Golang>Golang</a></span></div><div class=clear style=display:none><div class=toc-article><div class=toc-title>文章目录</div></div></div><div class=post-content><blockquote><p>谈到无锁队列，就不得不提 Michael 和 Scott 在 1996 年发表的论文 <a href=https://www.cs.rochester.edu/u/scott/papers/1996_PODC_queues.pdf>Simple, Fast, and Practical Non-Blocking and Blocking Concurrent Queue Algorithms</a>，Java 中 <code>ConcurrentLinkedQueue</code> 也是基于该论文的算法实现。</p></blockquote><h2 id=伪代码>伪代码</h2><p>论文中 lock-free queue 算法的伪代码：</p><p>正如论文的题目描述的，它非常简单，代码量很少。主要思路就是使用 <a href=https://zh.wikipedia.org/wiki/%E6%AF%94%E8%BE%83%E5%B9%B6%E4%BA%A4%E6%8D%A2>CAS</a> 操作队列的头指针和尾指针，以实现线程安全。</p><pre><code>structure pointer_t {ptr: pointer to node_t, count: unsigned integer}
+structure node_t {value: data type, next: pointer_t}
+structure queue_t {Head: pointer_t, Tail: pointer_t}
+
+initialize(Q: pointer to queue_t)
+   node = new_node()		// Allocate a free node
+   node-&gt;next.ptr = NULL	// Make it the only node in the linked list
+   Q-&gt;Head.ptr = Q-&gt;Tail.ptr = node	// Both Head and Tail point to it
+
+enqueue(Q: pointer to queue_t, value: data type)
+ E1:   node = new_node()	// Allocate a new node from the free list
+ E2:   node-&gt;value = value	// Copy enqueued value into node
+ E3:   node-&gt;next.ptr = NULL	// Set next pointer of node to NULL
+ E4:   loop			// Keep trying until Enqueue is done
+ E5:      tail = Q-&gt;Tail	// Read Tail.ptr and Tail.count together
+ E6:      next = tail.ptr-&gt;next	// Read next ptr and count fields together
+ E7:      if tail == Q-&gt;Tail	// Are tail and next consistent?
+             // Was Tail pointing to the last node?
+ E8:         if next.ptr == NULL
+                // Try to link node at the end of the linked list
+ E9:            if CAS(&amp;tail.ptr-&gt;next, next, &lt;node, next.count+1&gt;)
+E10:               break	// Enqueue is done.  Exit loop
+E11:            endif
+E12:         else		// Tail was not pointing to the last node
+                // Try to swing Tail to the next node
+E13:            CAS(&amp;Q-&gt;Tail, tail, &lt;next.ptr, tail.count+1&gt;)
+E14:         endif
+E15:      endif
+E16:   endloop
+       // Enqueue is done.  Try to swing Tail to the inserted node
+E17:   CAS(&amp;Q-&gt;Tail, tail, &lt;node, tail.count+1&gt;)
+
+dequeue(Q: pointer to queue_t, pvalue: pointer to data type): boolean
+ D1:   loop			     // Keep trying until Dequeue is done
+ D2:      head = Q-&gt;Head	     // Read Head
+ D3:      tail = Q-&gt;Tail	     // Read Tail
+ D4:      next = head.ptr-&gt;next    // Read Head.ptr-&gt;next
+ D5:      if head == Q-&gt;Head	     // Are head, tail, and next consistent?
+ D6:         if head.ptr == tail.ptr // Is queue empty or Tail falling behind?
+ D7:            if next.ptr == NULL  // Is queue empty?
+ D8:               return FALSE      // Queue is empty, couldn't dequeue
+ D9:            endif
+                // Tail is falling behind.  Try to advance it
+D10:            CAS(&amp;Q-&gt;Tail, tail, &lt;next.ptr, tail.count+1&gt;)
+D11:         else		     // No need to deal with Tail
+                // Read value before CAS
+                // Otherwise, another dequeue might free the next node
+D12:            *pvalue = next.ptr-&gt;value
+                // Try to swing Head to the next node
+D13:            if CAS(&amp;Q-&gt;Head, head, &lt;next.ptr, head.count+1&gt;)
+D14:               break             // Dequeue is done.  Exit loop
+D15:            endif
+D16:         endif
+D17:      endif
+D18:   endloop
+D19:   free(head.ptr)		     // It is safe now to free the old node
+D20:   return TRUE                   // Queue was not empty, dequeue succeeded
+</code></pre><h2 id=实现>实现</h2><p>简单起见，不考虑 <a href=https://en.wikipedia.org/wiki/ABA_problem>ABA</a> 问题，所以没有实现带版本号的 CAS</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">36
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">37
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">38
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">39
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">40
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">41
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">42
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">43
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">44
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">45
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">46
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">47
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">48
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">49
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">50
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">51
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">52
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">53
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">54
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">55
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">56
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">57
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">58
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">59
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">60
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">61
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">62
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">63
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">64
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">65
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">66
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">67
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">68
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">69
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">70
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">71
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">72
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">73
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">74
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>import</span> (
+	<span style=color:#d14>&#34;sync/atomic&#34;</span>
+	<span style=color:#d14>&#34;unsafe&#34;</span>
+)
+
+<span style=color:#000;font-weight:700>type</span> lockFreeQueue <span style=color:#000;font-weight:700>struct</span> {
+	head unsafe.Pointer
+	tail unsafe.Pointer
+	len  <span style=color:#458;font-weight:700>int32</span>
+}
+
+<span style=color:#000;font-weight:700>type</span> node <span style=color:#000;font-weight:700>struct</span> {
+	value <span style=color:#000;font-weight:700>interface</span>{}
+	next  unsafe.Pointer
+}
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>NewLockFreeQueue</span>() <span style=color:#000;font-weight:700>*</span>lockFreeQueue {
+	n <span style=color:#000;font-weight:700>:=</span> unsafe.<span style=color:#900;font-weight:700>Pointer</span>(<span style=color:#000;font-weight:700>&amp;</span>node{})
+	<span style=color:#000;font-weight:700>return</span> <span style=color:#000;font-weight:700>&amp;</span>lockFreeQueue{head: n, tail: n}
+}
+
+<span style=color:#000;font-weight:700>func</span> (q <span style=color:#000;font-weight:700>*</span>lockFreeQueue) <span style=color:#900;font-weight:700>Enqueue</span>(v <span style=color:#000;font-weight:700>interface</span>{}) {
+	n <span style=color:#000;font-weight:700>:=</span> <span style=color:#000;font-weight:700>&amp;</span>node{value: v}
+	<span style=color:#000;font-weight:700>for</span> {
+		tail <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>load</span>(<span style=color:#000;font-weight:700>&amp;</span>q.tail)
+		next <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>load</span>(<span style=color:#000;font-weight:700>&amp;</span>tail.next)
+		<span style=color:#000;font-weight:700>if</span> tail <span style=color:#000;font-weight:700>==</span> <span style=color:#900;font-weight:700>load</span>(<span style=color:#000;font-weight:700>&amp;</span>q.tail) {
+			<span style=color:#000;font-weight:700>if</span> next <span style=color:#000;font-weight:700>==</span> <span style=color:#000;font-weight:700>nil</span> {
+				<span style=color:#000;font-weight:700>if</span> <span style=color:#900;font-weight:700>cas</span>(<span style=color:#000;font-weight:700>&amp;</span>tail.next, next, n) {
+					<span style=color:#900;font-weight:700>cas</span>(<span style=color:#000;font-weight:700>&amp;</span>q.tail, tail, n)
+					atomic.<span style=color:#900;font-weight:700>AddInt32</span>(<span style=color:#000;font-weight:700>&amp;</span>q.len, <span style=color:#099>1</span>)
+					<span style=color:#000;font-weight:700>return</span>
+				}
+			} <span style=color:#000;font-weight:700>else</span> {
+				<span style=color:#900;font-weight:700>cas</span>(<span style=color:#000;font-weight:700>&amp;</span>q.tail, tail, next)
+			}
+		}
+	}
+}
+
+<span style=color:#000;font-weight:700>func</span> (q <span style=color:#000;font-weight:700>*</span>lockFreeQueue) <span style=color:#900;font-weight:700>Dequeue</span>() <span style=color:#000;font-weight:700>interface</span>{} {
+	<span style=color:#000;font-weight:700>for</span> {
+		head <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>load</span>(<span style=color:#000;font-weight:700>&amp;</span>q.head)
+		tail <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>load</span>(<span style=color:#000;font-weight:700>&amp;</span>q.tail)
+		next <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>load</span>(<span style=color:#000;font-weight:700>&amp;</span>head.next)
+		<span style=color:#000;font-weight:700>if</span> head <span style=color:#000;font-weight:700>==</span> <span style=color:#900;font-weight:700>load</span>(<span style=color:#000;font-weight:700>&amp;</span>q.head) {
+			<span style=color:#000;font-weight:700>if</span> head <span style=color:#000;font-weight:700>==</span> tail {
+				<span style=color:#000;font-weight:700>if</span> next <span style=color:#000;font-weight:700>==</span> <span style=color:#000;font-weight:700>nil</span> {
+					<span style=color:#000;font-weight:700>return</span> <span style=color:#000;font-weight:700>nil</span>
+				}
+				<span style=color:#900;font-weight:700>cas</span>(<span style=color:#000;font-weight:700>&amp;</span>q.tail, tail, next)
+			} <span style=color:#000;font-weight:700>else</span> {
+				v <span style=color:#000;font-weight:700>:=</span> next.value
+				<span style=color:#000;font-weight:700>if</span> <span style=color:#900;font-weight:700>cas</span>(<span style=color:#000;font-weight:700>&amp;</span>q.head, head, next) {
+					atomic.<span style=color:#900;font-weight:700>AddInt32</span>(<span style=color:#000;font-weight:700>&amp;</span>q.len, <span style=color:#000;font-weight:700>-</span><span style=color:#099>1</span>)
+					<span style=color:#000;font-weight:700>return</span> v
+				}
+			}
+		}
+	}
+}
+
+<span style=color:#000;font-weight:700>func</span> (q <span style=color:#000;font-weight:700>*</span>lockFreeQueue) <span style=color:#900;font-weight:700>Empty</span>() <span style=color:#458;font-weight:700>bool</span> {
+	<span style=color:#000;font-weight:700>return</span> atomic.<span style=color:#900;font-weight:700>LoadInt32</span>(<span style=color:#000;font-weight:700>&amp;</span>q.len) <span style=color:#000;font-weight:700>!=</span> <span style=color:#099>0</span>
+}
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>load</span>(p <span style=color:#000;font-weight:700>*</span>unsafe.Pointer) <span style=color:#000;font-weight:700>*</span>node {
+	<span style=color:#000;font-weight:700>return</span> (<span style=color:#000;font-weight:700>*</span>node)(atomic.<span style=color:#900;font-weight:700>LoadPointer</span>(p))
+}
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>cas</span>(p <span style=color:#000;font-weight:700>*</span>unsafe.Pointer, old, new <span style=color:#000;font-weight:700>*</span>node) <span style=color:#458;font-weight:700>bool</span> {
+	<span style=color:#000;font-weight:700>return</span> atomic.<span style=color:#900;font-weight:700>CompareAndSwapPointer</span>(p,
+		unsafe.<span style=color:#900;font-weight:700>Pointer</span>(old), unsafe.<span style=color:#900;font-weight:700>Pointer</span>(new))
+}
+</code></pre></td></tr></table></div></div><h2 id=benchmark>Benchmark</h2><p>测试结果分别是无锁并发队列， 和 <code>sync.Mutex</code> 加 <code>slice</code> 实现的简单并发队列：</p><pre><code>goos: linux
+goarch: amd64
+pkg: github.com/maolonglong/queue
+cpu: Intel(R) Core(TM) i7-7500U CPU @ 2.70GHz
+BenchmarkQueue/lock_free_queue-4         	11681959	       117.3 ns/op
+BenchmarkQueue/simple_mutex_queue-4      	11810298	       131.8 ns/op
+PASS
+ok  	github.com/maolonglong/queue	3.780s
+</code></pre></div><div class=post-archive><h2>See Also</h2><ul class=listing><li><a href=/post/golang/unsafe/>Unsafe Go</a></li><li><a href=/post/blockchain/cryptographic-hash-functions/>比特币笔记 —— 哈希函数</a></li><li><a href=/about/>关于</a></li><li><a href=/post/%E7%94%9F%E6%B4%BB/%E6%96%B0%E7%9A%84%E5%BC%80%E5%A7%8B/>新的开始</a></li><li><a href=/post/java/reentrant-lock/>【Java 并发】重入锁（ReentrantLock）</a></li></ul></div><div class="post-meta meta-tags"><ul class=clearfix><li><a href=/tags/CAS>CAS</a></li><li><a href=/tags/unsafe>unsafe</a></li></ul></div></article><div class="post bg-white"><script src=https://utteranc.es/client.js repo=MaoLongLong/maolonglong.github.io issue-term=pathname theme=github-light crossorigin=anonymous async></script></div></div><footer id=footer><div>&copy; 2021 <a href=https://maolonglong.github.io>毛珑珑的博客 By 毛珑珑</a></div><br><div><div class=github-badge><a href=https://gohugo.io/ target=_black rel=nofollow><span class=badge-subject>Powered by</span><span class="badge-value bg-blue">Hugo</span></a></div><div class=github-badge><a href=https://www.flysnow.org/ target=_black><span class=badge-subject>Design by</span><span class="badge-value bg-brightgreen">飞雪无情</span></a></div><div class=github-badge><a href=https://github.com/flysnow-org/maupassant-hugo target=_black><span class=badge-subject>Theme</span><span class="badge-value bg-yellowgreen">Maupassant</span></a></div></div></footer><script type=text/javascript>window.MathJax={tex2jax:{inlineMath:[['$','$']],processEscapes:!0}}</script><script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML" async></script><script src=https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.js></script><a id=rocket href=#top></a><script type=text/javascript src="/js/totop.js?v=0.0.0" async></script></div><div id=secondary><section class=widget><form id=search action=https://maolonglong.github.io/search/ method=get accept-charset=utf-8 target=_blank _lpchecked=1><input type=text name=q maxlength=20 placeholder=Search>
+<input type=hidden name=sitesearch value=https://maolonglong.github.io>
+<button type=submit class="submit icon-search"></button></form></section><section class=widget><h3 class=widget-title>最近文章</h3><ul class=widget-list><li><a href=https://maolonglong.github.io/post/golang/queue/ title=无锁队列的简单实现>无锁队列的简单实现</a></li><li><a href=https://maolonglong.github.io/post/blockchain/cryptographic-hash-functions/ title="比特币笔记 —— 哈希函数">比特币笔记 —— 哈希函数</a></li><li><a href=https://maolonglong.github.io/post/golang/unsafe/ title="Unsafe Go">Unsafe Go</a></li><li><a href=https://maolonglong.github.io/post/%E7%94%9F%E6%B4%BB/%E6%96%B0%E7%9A%84%E5%BC%80%E5%A7%8B/ title=新的开始>新的开始</a></li><li><a href=https://maolonglong.github.io/post/java/reentrant-lock/ title="【Java 并发】重入锁（ReentrantLock）">【Java 并发】重入锁（ReentrantLock）</a></li><li><a href=https://maolonglong.github.io/post/java/volatile/ title="【Java 并发】volatile 关键字基本理解与使用">【Java 并发】volatile 关键字基本理解与使用</a></li></ul></section><section class=widget><h3 class=widget-title><a href=/categories/>分类</a></h3><ul class=widget-list><li><a href=https://maolonglong.github.io/categories/Golang/>Golang (2)</a></li><li><a href=https://maolonglong.github.io/categories/Java/>Java (2)</a></li><li><a href=https://maolonglong.github.io/categories/%E5%8C%BA%E5%9D%97%E9%93%BE/>区块链 (1)</a></li><li><a href=https://maolonglong.github.io/categories/%E7%94%9F%E6%B4%BB/>生活 (1)</a></li></ul></section><section class=widget><h3 class=widget-title><a href=/tags/>标签</a></h3><div class=tagcloud><a href=https://maolonglong.github.io/tags/Bitcoin/>Bitcoin</a>
+<a href=https://maolonglong.github.io/tags/CAS/>CAS</a>
+<a href=https://maolonglong.github.io/tags/ReentrantLock/>ReentrantLock</a>
+<a href=https://maolonglong.github.io/tags/SHA256/>SHA256</a>
+<a href=https://maolonglong.github.io/tags/unsafe/>unsafe</a>
+<a href=https://maolonglong.github.io/tags/volatile/>volatile</a>
+<a href=https://maolonglong.github.io/tags/%E5%AE%9E%E4%B9%A0/>实习</a>
+<a href=https://maolonglong.github.io/tags/%E5%B9%B6%E5%8F%91/>并发</a>
+<a href=https://maolonglong.github.io/tags/%E7%AB%9E%E8%B5%9B/>竞赛</a></div></section><section class=widget><h3 class=widget-title>其它</h3><ul class=widget-list><li><a href=https://maolonglong.github.io/index.xml>文章 RSS</a></li></ul></section></div></div></div></div></body></html>
