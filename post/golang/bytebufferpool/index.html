@@ -1,0 +1,425 @@
+<!doctype html><html lang=zh-cn><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1"><title>高性能字节池设计 | bytebufferpool 源码分析 | 毛珑珑的博客</title><meta property="og:title" content="高性能字节池设计 | bytebufferpool 源码分析 - 毛珑珑的博客"><meta property="og:type" content="article"><meta property="article:published_time" content="2021-06-28T19:42:29+08:00"><meta property="article:modified_time" content="2021-06-28T19:42:29+08:00"><meta name=Keywords content><meta name=description content="高性能字节池设计 | bytebufferpool 源码分析"><meta name=author content="毛珑珑"><meta property="og:url" content="https://maolonglong.github.io/post/golang/bytebufferpool/"><link rel="shortcut icon" href=/favicon.ico type=image/x-icon><link rel=stylesheet href=/css/normalize.css><link rel=stylesheet href=/css/style.css><script type=text/javascript src=//cdn.bootcdn.net/ajax/libs/jquery/3.4.1/jquery.min.js></script><link href=https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.css rel=stylesheet></head><body><header id=header class=clearfix><div class=container><div class=col-group><div class=site-name><a id=logo href=https://maolonglong.github.io>毛珑珑的博客</a><p class=description>只有非常努力，才能显得毫不费力</p></div><div><nav id=nav-menu class=clearfix><a class=current href=https://maolonglong.github.io>首页</a>
+<a href=https://maolonglong.github.io/archives/ title=归档>归档</a>
+<a href=https://maolonglong.github.io/about/ title=关于>关于</a></nav></div></div></div></header><div id=body><div class=container><div class=col-group><div class=col-8 id=main><div class=res-cons><style type=text/css>.post-toc{position:fixed;width:200px;margin-left:-210px;padding:5px 10px;font-family:Athelas,STHeiti,Microsoft Yahei,serif;font-size:12px;border:1px solid rgba(0,0,0,7%);border-radius:5px;background-color:rgba(255,255,255,.98);background-clip:padding-box;-webkit-box-shadow:1px 1px 2px rgba(0,0,0,.125);box-shadow:1px 1px 2px rgba(0,0,0,.125);word-wrap:break-word;white-space:nowrap;-webkit-box-sizing:border-box;box-sizing:border-box;z-index:999;cursor:pointer;max-height:70%;overflow-y:auto;overflow-x:hidden}.post-toc .post-toc-title{width:100%;margin:0 auto;font-size:20px;font-weight:400;text-transform:uppercase;text-align:center}.post-toc .post-toc-content{font-size:15px}.post-toc .post-toc-content>nav>ul{margin:10px 0}.post-toc .post-toc-content ul{padding-left:20px;list-style:square;margin:.5em;line-height:1.8em}.post-toc .post-toc-content ul ul{padding-left:15px;display:none}@media print,screen and (max-width:1057px){.post-toc{display:none}}</style><div class=post-toc style=position:absolute;top:188px><h2 class=post-toc-title>文章目录</h2><div class=post-toc-content><nav id=TableOfContents><ul><li><a href=#简介>简介</a></li><li><a href=#简单实现>简单实现</a><ul><li><a href=#minio-bytepoolcap>MinIO BytePoolCap</a></li><li><a href=#syncpool>sync.Pool</a></li></ul></li><li><a href=#问题分析>问题分析</a></li><li><a href=#bytebufferpool>ByteBufferPool</a></li><li><a href=#性能测试>性能测试</a></li><li><a href=#总结>总结</a></li></ul></nav></div></div><script type=text/javascript>$(document).ready(function(){var a=$(".post-toc"),b,c,d;a.length&&(b=$("#main").offset().left,b<220&&a.css({width:b-10,"margin-left":0-b}),c=a.offset().top-20,d={start:{position:"absolute",top:c},process:{position:"fixed",top:20}},$(window).scroll(function(){var b=$(window).scrollTop();b<c?a.css(d.start):a.css(d.process)}))})</script><article class=post><header><h1 class=post-title>高性能字节池设计 | bytebufferpool 源码分析</h1></header><date class="post-meta meta-date">2021年6月28日</date><div class=post-meta><span>|</span>
+<span class=meta-category><a href=/categories/Golang>Golang</a></span></div><div class=clear style=display:none><div class=toc-article><div class=toc-title>文章目录</div></div></div><div class=post-content><h2 id=简介>简介</h2><p>今天的主角是 <a href=https://github.com/valyala/bytebufferpool>bytebufferpool</a> ，仓库的 README 文件是这么描述 bytebufferpool 的：</p><blockquote><p>Currently bytebufferpool is fastest and most effective buffer pool written in Go.</p></blockquote><p>bytebufferpool 基本上是目前 Go 实现的最快的字节池，在许多优秀项目中都有被使用（<a href=https://github.com/valyala/fasthttp>fasthttp</a>, <a href=https://github.com/valyala/quicktemplate>quicktemplate</a>, <a href=https://github.com/panjf2000/gnet>gnet</a>）</p><p>什么是字节池？在读取文件或者从 <code>io.Reader</code> 获取数据时，一般都需要创建一个字节切片 <code>[]byte</code> 作为缓冲，如果对于这种方法有大量的调用，就会频繁地创建 <code>[]byte</code> ，这需要太多内存的申请和释放，增大了 GC 的压力。这个时候“池化”技术就派上了用场，通过复用对象以减少内存的分配和释放。</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>package</span> main
+
+<span style=color:#000;font-weight:700>import</span> (
+	<span style=color:#d14>&#34;fmt&#34;</span>
+	<span style=color:#d14>&#34;io&#34;</span>
+	<span style=color:#d14>&#34;log&#34;</span>
+	<span style=color:#d14>&#34;os&#34;</span>
+)
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>main</span>() {
+	r, _ <span style=color:#000;font-weight:700>:=</span> os.<span style=color:#900;font-weight:700>Open</span>(<span style=color:#d14>&#34;./main.go&#34;</span>)
+	<span style=color:#998;font-style:italic>// 普通方式
+</span><span style=color:#998;font-style:italic></span>	buf <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>make</span>([]<span style=color:#458;font-weight:700>byte</span>, <span style=color:#099>64</span>)
+	<span style=color:#000;font-weight:700>for</span> {
+		n, err <span style=color:#000;font-weight:700>:=</span> r.<span style=color:#900;font-weight:700>Read</span>(buf)
+		<span style=color:#000;font-weight:700>if</span> err <span style=color:#000;font-weight:700>!=</span> <span style=color:#000;font-weight:700>nil</span> {
+			<span style=color:#000;font-weight:700>if</span> err <span style=color:#000;font-weight:700>==</span> io.EOF {
+				<span style=color:#000;font-weight:700>break</span>
+			}
+			log.<span style=color:#900;font-weight:700>Fatal</span>(err)
+		}
+		fmt.<span style=color:#900;font-weight:700>Print</span>(<span style=color:#0086b3>string</span>(buf[:n]))
+	}
+}
+</code></pre></td></tr></table></div></div><h2 id=简单实现>简单实现</h2><h3 id=minio-bytepoolcap>MinIO BytePoolCap</h3><p>MinIO 中使用 <code>channel</code> 实现了一个非常简单的<strong>有界</strong>字节池 <a href=https://github.com/minio/minio/blob/master/internal/bpool/bpool.go>bpool</a></p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>type</span> BytePoolCap <span style=color:#000;font-weight:700>struct</span> {
+	c    <span style=color:#000;font-weight:700>chan</span> []<span style=color:#458;font-weight:700>byte</span>
+	w    <span style=color:#458;font-weight:700>int</span>
+	wcap <span style=color:#458;font-weight:700>int</span>
+}
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>NewBytePoolCap</span>(maxSize <span style=color:#458;font-weight:700>int</span>, width <span style=color:#458;font-weight:700>int</span>, capwidth <span style=color:#458;font-weight:700>int</span>) (bp <span style=color:#000;font-weight:700>*</span>BytePoolCap) {
+	<span style=color:#000;font-weight:700>return</span> <span style=color:#000;font-weight:700>&amp;</span>BytePoolCap{
+		c:    <span style=color:#0086b3>make</span>(<span style=color:#000;font-weight:700>chan</span> []<span style=color:#458;font-weight:700>byte</span>, maxSize),
+		w:    width,
+		wcap: capwidth,
+	}
+}
+</code></pre></td></tr></table></div></div><ul><li><code>c</code> 用来存放字节切片（这也就是为什么<strong>有界</strong>的原因）</li><li><code>w</code> 表示创建字节切片的 <code>len</code></li><li><code>wcap</code> 表示创建字节切片的 <code>cap</code></li></ul><p><code>Get()</code> 方法, 从池中获取字节切片：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>func</span> (bp <span style=color:#000;font-weight:700>*</span>BytePoolCap) <span style=color:#900;font-weight:700>Get</span>() (b []<span style=color:#458;font-weight:700>byte</span>) {
+	<span style=color:#000;font-weight:700>select</span> {
+	<span style=color:#000;font-weight:700>case</span> b = <span style=color:#000;font-weight:700>&lt;-</span>bp.c:
+		<span style=color:#998;font-style:italic>// channel 中存在 []byte 则复用
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#000;font-weight:700>default</span>:
+		<span style=color:#998;font-style:italic>// 否则创建 []byte
+</span><span style=color:#998;font-style:italic></span>		<span style=color:#000;font-weight:700>if</span> bp.wcap &gt; <span style=color:#099>0</span> {
+			b = <span style=color:#0086b3>make</span>([]<span style=color:#458;font-weight:700>byte</span>, bp.w, bp.wcap)
+		} <span style=color:#000;font-weight:700>else</span> {
+			b = <span style=color:#0086b3>make</span>([]<span style=color:#458;font-weight:700>byte</span>, bp.w)
+		}
+	}
+	<span style=color:#000;font-weight:700>return</span>
+}
+</code></pre></td></tr></table></div></div><p><code>Put([]byte)</code> 方法，将使用完的切片放回池中，以被下一次获取：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">8
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>func</span> (bp <span style=color:#000;font-weight:700>*</span>BytePoolCap) <span style=color:#900;font-weight:700>Put</span>(b []<span style=color:#458;font-weight:700>byte</span>) {
+	<span style=color:#000;font-weight:700>select</span> {
+	<span style=color:#000;font-weight:700>case</span> bp.c <span style=color:#000;font-weight:700>&lt;-</span> b:
+		<span style=color:#998;font-style:italic>// channel 放得下
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#000;font-weight:700>default</span>:
+		<span style=color:#998;font-style:italic>// channel 放不下的话则不进行任何操作，直接丢弃这个 []byte
+</span><span style=color:#998;font-style:italic></span>	}
+}
+</code></pre></td></tr></table></div></div><p>使用示例</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">8
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#998;font-style:italic>// 多个 goroutine 公用一个 pool
+</span><span style=color:#998;font-style:italic></span><span style=color:#000;font-weight:700>var</span> bp = bpool.<span style=color:#900;font-weight:700>NewBytePoolCap</span>(<span style=color:#099>100</span>, <span style=color:#099>64</span>, <span style=color:#099>64</span>)
+
+<span style=color:#998;font-style:italic>// func ...
+</span><span style=color:#998;font-style:italic></span>buf <span style=color:#000;font-weight:700>:=</span> bp.<span style=color:#900;font-weight:700>Get</span>()
+<span style=color:#000;font-weight:700>defer</span> bp.<span style=color:#900;font-weight:700>Put</span>(buf)
+
+<span style=color:#998;font-style:italic>// use buf ...
+</span></code></pre></td></tr></table></div></div><h3 id=syncpool>sync.Pool</h3><p>谈到“池”，很容易想到 Go 标准库中的 <code>sync.Pool</code>，我们可以用几行代码就实现一个简单的字节池：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">5
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go>pool <span style=color:#000;font-weight:700>:=</span> <span style=color:#000;font-weight:700>&amp;</span>sync.Pool{
+	New: <span style=color:#000;font-weight:700>func</span>() <span style=color:#000;font-weight:700>interface</span>{} {
+		<span style=color:#000;font-weight:700>return</span> <span style=color:#0086b3>make</span>([]<span style=color:#458;font-weight:700>byte</span>, <span style=color:#099>64</span>)
+	},
+}
+</code></pre></td></tr></table></div></div><p>然后就可以使用 <code>pool.Get().([]byte)</code> 从池中取字节切片，使用完后调用 <code>pool.Put(buf)</code> 归还到池中。</p><h2 id=问题分析>问题分析</h2><p>上面的两种字节池实现都存在许多问题：池中新建的字节切片的 <code>len</code> 和 <code>cap</code> 都是创建池的时候固定的，不能动态修改。另外，如果往字节切片写入了大量数据（发生多次扩容），此时再将这样的字节切片放回池中，显然会造成内存浪费。</p><p>所以需要解决的问题：</p><ol><li>动态修改新分配字节切片的大小</li><li>阻止大切片放回字节池</li></ol><h2 id=bytebufferpool>ByteBufferPool</h2><p>ByteBufferPool 中实现了一个类似 <code>bytes.Buffer</code> 的结构（<a href=https://github.com/valyala/bytebufferpool/blob/master/bytebuffer.go>ByteBuffer</a>），它封装了一些对 <code>[]byte</code> 的复杂操作，从 benchmark 的结果可以看出它的性能比 <code>bytes.Buffer</code> 略高一些，但它不是字节池的重点，所以就不贴代码了。</p><p>ByteBufferPool 是怎么解决上述问题的？</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">36
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>const</span> (
+	minBitSize = <span style=color:#099>6</span>  <span style=color:#998;font-style:italic>// 2**6=64 is a CPU cache line size
+</span><span style=color:#998;font-style:italic></span>
+	<span style=color:#998;font-style:italic>// 将 buf 的大小划分为 20 个区间
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#998;font-style:italic>// ==&gt; (0, 64], (64, 128], (128, 256], ... , (8388608, 16777216], (16777216, 33554432]
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#998;font-style:italic>// 超过 33554432 的也属于最后一个区间
+</span><span style=color:#998;font-style:italic></span>	steps = <span style=color:#099>20</span>
+
+	minSize = <span style=color:#099>1</span> <span style=color:#000;font-weight:700>&lt;&lt;</span> minBitSize               <span style=color:#998;font-style:italic>// 64
+</span><span style=color:#998;font-style:italic></span>	maxSize = <span style=color:#099>1</span> <span style=color:#000;font-weight:700>&lt;&lt;</span> (minBitSize <span style=color:#000;font-weight:700>+</span> steps <span style=color:#000;font-weight:700>-</span> <span style=color:#099>1</span>) <span style=color:#998;font-style:italic>// 33554432
+</span><span style=color:#998;font-style:italic></span>
+	calibrateCallsThreshold = <span style=color:#099>42000</span>
+	maxPercentile           = <span style=color:#099>0.95</span>
+)
+
+<span style=color:#000;font-weight:700>type</span> Pool <span style=color:#000;font-weight:700>struct</span> {
+	calls       [steps]<span style=color:#458;font-weight:700>uint64</span> <span style=color:#998;font-style:italic>// 不同大小 buf 的使用频次
+</span><span style=color:#998;font-style:italic></span>	calibrating <span style=color:#458;font-weight:700>uint64</span>        <span style=color:#998;font-style:italic>// 标记是否正在校准（校准过程就是调整 defaultSize 和 maxSize）
+</span><span style=color:#998;font-style:italic></span>
+	defaultSize <span style=color:#458;font-weight:700>uint64</span> <span style=color:#998;font-style:italic>// make []byte 时的 cap
+</span><span style=color:#998;font-style:italic></span>	maxSize     <span style=color:#458;font-weight:700>uint64</span> <span style=color:#998;font-style:italic>// 能放回池中的最大 buf 大小
+</span><span style=color:#998;font-style:italic></span>
+	pool sync.Pool <span style=color:#998;font-style:italic>// 存储 buf
+</span><span style=color:#998;font-style:italic></span>}
+
+<span style=color:#000;font-weight:700>func</span> (p <span style=color:#000;font-weight:700>*</span>Pool) <span style=color:#900;font-weight:700>Get</span>() <span style=color:#000;font-weight:700>*</span>ByteBuffer {
+	v <span style=color:#000;font-weight:700>:=</span> p.pool.<span style=color:#900;font-weight:700>Get</span>()
+	<span style=color:#998;font-style:italic>// 如果池中有 buf 直接返回
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#000;font-weight:700>if</span> v <span style=color:#000;font-weight:700>!=</span> <span style=color:#000;font-weight:700>nil</span> {
+		<span style=color:#000;font-weight:700>return</span> v.(<span style=color:#000;font-weight:700>*</span>ByteBuffer)
+	}
+	<span style=color:#998;font-style:italic>// 否则新建一个 cap 为 defaultSize 的 buf
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#000;font-weight:700>return</span> <span style=color:#000;font-weight:700>&amp;</span>ByteBuffer{
+		B: <span style=color:#0086b3>make</span>([]<span style=color:#458;font-weight:700>byte</span>, <span style=color:#099>0</span>, atomic.<span style=color:#900;font-weight:700>LoadUint64</span>(<span style=color:#000;font-weight:700>&amp;</span>p.defaultSize)),
+	}
+}
+</code></pre></td></tr></table></div></div><p>继续查看 <code>Put()</code>，从这就可以看出 ByteBufferPool 的主要逻辑了：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>func</span> (p <span style=color:#000;font-weight:700>*</span>Pool) <span style=color:#900;font-weight:700>Put</span>(b <span style=color:#000;font-weight:700>*</span>ByteBuffer) {
+	<span style=color:#998;font-style:italic>// len 所在 “区间” 的下标
+</span><span style=color:#998;font-style:italic></span>	idx <span style=color:#000;font-weight:700>:=</span> <span style=color:#900;font-weight:700>index</span>(<span style=color:#0086b3>len</span>(b.B))
+
+	<span style=color:#998;font-style:italic>// 解决了问题1：动态调整 size
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#998;font-style:italic>// 使用频次加1，如果超过了阈值（42000）则进行校准
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#000;font-weight:700>if</span> atomic.<span style=color:#900;font-weight:700>AddUint64</span>(<span style=color:#000;font-weight:700>&amp;</span>p.calls[idx], <span style=color:#099>1</span>) &gt; calibrateCallsThreshold {
+		p.<span style=color:#900;font-weight:700>calibrate</span>()
+	}
+
+	<span style=color:#998;font-style:italic>// 解决了问题2：阻止大切片放回字节池
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#998;font-style:italic>// 如果还未设置 maxSize 或 cap 小于等于 maxSize 才执行 Put
+</span><span style=color:#998;font-style:italic></span>	maxSize <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>int</span>(atomic.<span style=color:#900;font-weight:700>LoadUint64</span>(<span style=color:#000;font-weight:700>&amp;</span>p.maxSize))
+	<span style=color:#000;font-weight:700>if</span> maxSize <span style=color:#000;font-weight:700>==</span> <span style=color:#099>0</span> <span style=color:#000;font-weight:700>||</span> <span style=color:#0086b3>cap</span>(b.B) <span style=color:#000;font-weight:700>&lt;=</span> maxSize {
+		b.<span style=color:#900;font-weight:700>Reset</span>()
+		p.pool.<span style=color:#900;font-weight:700>Put</span>(b)
+	}
+}
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>index</span>(n <span style=color:#458;font-weight:700>int</span>) <span style=color:#458;font-weight:700>int</span> {
+	n<span style=color:#000;font-weight:700>--</span>
+	n <span style=color:#000;font-weight:700>&gt;&gt;=</span> minBitSize
+	idx <span style=color:#000;font-weight:700>:=</span> <span style=color:#099>0</span>
+	<span style=color:#000;font-weight:700>for</span> n &gt; <span style=color:#099>0</span> {
+		n <span style=color:#000;font-weight:700>&gt;&gt;=</span> <span style=color:#099>1</span>
+		idx<span style=color:#000;font-weight:700>++</span>
+	}
+	<span style=color:#000;font-weight:700>if</span> idx <span style=color:#000;font-weight:700>&gt;=</span> steps {
+		idx = steps <span style=color:#000;font-weight:700>-</span> <span style=color:#099>1</span>
+	}
+	<span style=color:#000;font-weight:700>return</span> idx
+}
+</code></pre></td></tr></table></div></div><p>划分区间的目的就是方便统计出程序近一段时间内<strong>最经常使用</strong>多大的 buf，从而决定 <code>defaultSize</code> 和 <code>maxSize</code>，这一块的逻辑主要在 <code>calibrate()</code> ：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">36
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">37
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">38
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">39
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">40
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">41
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">42
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">43
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">44
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">45
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">46
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">47
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">48
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">49
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">50
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">51
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">52
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">53
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">54
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">55
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>func</span> (p <span style=color:#000;font-weight:700>*</span>Pool) <span style=color:#900;font-weight:700>calibrate</span>() {
+	<span style=color:#998;font-style:italic>// 通过 CAS 确保同一时刻只有一个 goroutine 执行 calibrate
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#000;font-weight:700>if</span> !atomic.<span style=color:#900;font-weight:700>CompareAndSwapUint64</span>(<span style=color:#000;font-weight:700>&amp;</span>p.calibrating, <span style=color:#099>0</span>, <span style=color:#099>1</span>) {
+		<span style=color:#000;font-weight:700>return</span>
+	}
+
+	a <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>make</span>(callSizes, <span style=color:#099>0</span>, steps)
+	<span style=color:#998;font-style:italic>// 所有大小 buf 的总使用频次
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#000;font-weight:700>var</span> callsSum <span style=color:#458;font-weight:700>uint64</span>
+	<span style=color:#000;font-weight:700>for</span> i <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint64</span>(<span style=color:#099>0</span>); i &lt; steps; i<span style=color:#000;font-weight:700>++</span> {
+		calls <span style=color:#000;font-weight:700>:=</span> atomic.<span style=color:#900;font-weight:700>SwapUint64</span>(<span style=color:#000;font-weight:700>&amp;</span>p.calls[i], <span style=color:#099>0</span>)
+		callsSum <span style=color:#000;font-weight:700>+=</span> calls
+		a = <span style=color:#0086b3>append</span>(a, callSize{
+			calls: calls,
+			size:  minSize <span style=color:#000;font-weight:700>&lt;&lt;</span> i,
+		})
+	}
+	<span style=color:#998;font-style:italic>// 按照使用频次从大到小排序
+</span><span style=color:#998;font-style:italic></span>	sort.<span style=color:#900;font-weight:700>Sort</span>(a)
+
+	<span style=color:#998;font-style:italic>// 将 defaultSize 设置为频次最高的 size
+</span><span style=color:#998;font-style:italic></span>	defaultSize <span style=color:#000;font-weight:700>:=</span> a[<span style=color:#099>0</span>].size
+	maxSize <span style=color:#000;font-weight:700>:=</span> defaultSize
+
+	<span style=color:#998;font-style:italic>// 选择 maxSize，让 95% 的 buf 都能被归还到池中，只有最大的 %5 无法归还
+</span><span style=color:#998;font-style:italic></span>	maxSum <span style=color:#000;font-weight:700>:=</span> <span style=color:#0086b3>uint64</span>(<span style=color:#0086b3>float64</span>(callsSum) <span style=color:#000;font-weight:700>*</span> maxPercentile)
+	callsSum = <span style=color:#099>0</span>
+	<span style=color:#000;font-weight:700>for</span> i <span style=color:#000;font-weight:700>:=</span> <span style=color:#099>0</span>; i &lt; steps; i<span style=color:#000;font-weight:700>++</span> {
+		<span style=color:#000;font-weight:700>if</span> callsSum &gt; maxSum {
+			<span style=color:#000;font-weight:700>break</span>
+		}
+		callsSum <span style=color:#000;font-weight:700>+=</span> a[i].calls
+		size <span style=color:#000;font-weight:700>:=</span> a[i].size
+		<span style=color:#000;font-weight:700>if</span> size &gt; maxSize {
+			maxSize = size
+		}
+	}
+
+	<span style=color:#998;font-style:italic>// 因为 pool 会被多个 goroutine 访问，所以需要使用原子写入
+</span><span style=color:#998;font-style:italic></span>	atomic.<span style=color:#900;font-weight:700>StoreUint64</span>(<span style=color:#000;font-weight:700>&amp;</span>p.defaultSize, defaultSize)
+	atomic.<span style=color:#900;font-weight:700>StoreUint64</span>(<span style=color:#000;font-weight:700>&amp;</span>p.maxSize, maxSize)
+
+	atomic.<span style=color:#900;font-weight:700>StoreUint64</span>(<span style=color:#000;font-weight:700>&amp;</span>p.calibrating, <span style=color:#099>0</span>)
+}
+
+<span style=color:#000;font-weight:700>type</span> callSize <span style=color:#000;font-weight:700>struct</span> {
+	calls <span style=color:#458;font-weight:700>uint64</span> <span style=color:#998;font-style:italic>// 使用频次
+</span><span style=color:#998;font-style:italic></span>	size  <span style=color:#458;font-weight:700>uint64</span> <span style=color:#998;font-style:italic>// buf 大小
+</span><span style=color:#998;font-style:italic></span>}
+
+<span style=color:#000;font-weight:700>type</span> callSizeSlice []callSize
+
+<span style=color:#000;font-weight:700>func</span> (a callSizeSlice) <span style=color:#900;font-weight:700>Len</span>() <span style=color:#458;font-weight:700>int</span>           { <span style=color:#000;font-weight:700>return</span> <span style=color:#0086b3>len</span>(a) }
+<span style=color:#000;font-weight:700>func</span> (a callSizeSlice) <span style=color:#900;font-weight:700>Swap</span>(i, j <span style=color:#458;font-weight:700>int</span>)      { a[i], a[j] = a[j], a[i] }
+<span style=color:#000;font-weight:700>func</span> (a callSizeSlice) <span style=color:#900;font-weight:700>Less</span>(i, j <span style=color:#458;font-weight:700>int</span>) <span style=color:#458;font-weight:700>bool</span> { <span style=color:#000;font-weight:700>return</span> a[i].calls &gt; a[j].calls }
+</code></pre></td></tr></table></div></div><h2 id=性能测试>性能测试</h2><p><a href=https://github.com/MaoLongLong/bytebufferpool/blob/main/pool_bench_test.go>pool_bench_test.go</a></p><p>从上往下，分别为 ByteBufferPool, MinIO BytePoolCap 和普通 <code>[]byte</code></p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-bash data-lang=bash>$ go <span style=color:#0086b3>test</span> -bench<span style=color:#000;font-weight:700>=</span>Pool -benchmem
+goos: linux
+goarch: amd64
+pkg: github.com/maolonglong/bytebufferpool
+cpu: Intel<span style=color:#000;font-weight:700>(</span>R<span style=color:#000;font-weight:700>)</span> Core<span style=color:#000;font-weight:700>(</span>TM<span style=color:#000;font-weight:700>)</span> i7-7500U CPU @ 2.70GHz
+BenchmarkByteBufferPoolBuf-4    <span style=color:#099>20764896</span>                52.71 ns/op            <span style=color:#099>0</span> B/op          <span style=color:#099>0</span> allocs/op
+BenchmarkBPool-4                 <span style=color:#099>7899157</span>               156.4 ns/op             <span style=color:#099>0</span> B/op          <span style=color:#099>0</span> allocs/op
+BenchmarkWithoutPool-4           <span style=color:#099>4511701</span>               270.5 ns/op          <span style=color:#099>1472</span> B/op          <span style=color:#099>3</span> allocs/op
+PASS
+ok      github.com/maolonglong/bytebufferpool   4.091s
+</code></pre></td></tr></table></div></div><p>从测试结果可以看出，ByteBufferPool 不管在速度还是内存上都优于另外两种方案。</p><h2 id=总结>总结</h2><p>GitHub 上许多优秀的项目其实代码并不难，通过这些项目可以学习大佬们设计、优化代码的思想，提升自己解决实际问题的能力。</p></div><div class=post-archive><h2>See Also</h2><ul class=listing><li><a href=/post/golang/queue/>无锁队列的简单实现</a></li><li><a href=/post/blockchain/cryptographic-hash-functions/>比特币笔记 —— 哈希函数</a></li><li><a href=/post/golang/unsafe/>Unsafe Go</a></li><li><a href=/about/>关于</a></li><li><a href=/post/%E7%94%9F%E6%B4%BB/%E6%96%B0%E7%9A%84%E5%BC%80%E5%A7%8B/>新的开始</a></li></ul></div><div class="post-meta meta-tags"><ul class=clearfix><li><a href=/tags/Pool>Pool</a></li></ul></div></article><div class="post bg-white"><script src=https://utteranc.es/client.js repo=MaoLongLong/maolonglong.github.io issue-term=pathname theme=github-light crossorigin=anonymous async></script></div></div><footer id=footer><div>&copy; 2021 <a href=https://maolonglong.github.io>毛珑珑的博客 By 毛珑珑</a></div><br><div><div class=github-badge><a href=https://gohugo.io/ target=_black rel=nofollow><span class=badge-subject>Powered by</span><span class="badge-value bg-blue">Hugo</span></a></div><div class=github-badge><a href=https://www.flysnow.org/ target=_black><span class=badge-subject>Design by</span><span class="badge-value bg-brightgreen">飞雪无情</span></a></div><div class=github-badge><a href=https://github.com/flysnow-org/maupassant-hugo target=_black><span class=badge-subject>Theme</span><span class="badge-value bg-yellowgreen">Maupassant</span></a></div></div></footer><script type=text/javascript>window.MathJax={tex2jax:{inlineMath:[['$','$']],processEscapes:!0}}</script><script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML" async></script><script src=https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.js></script><a id=rocket href=#top></a><script type=text/javascript src="/js/totop.js?v=0.0.0" async></script></div><div id=secondary><section class=widget><form id=search action=https://maolonglong.github.io/search/ method=get accept-charset=utf-8 target=_blank _lpchecked=1><input type=text name=q maxlength=20 placeholder=Search>
+<input type=hidden name=sitesearch value=https://maolonglong.github.io>
+<button type=submit class="submit icon-search"></button></form></section><section class=widget><h3 class=widget-title>最近文章</h3><ul class=widget-list><li><a href=https://maolonglong.github.io/post/golang/bytebufferpool/ title="高性能字节池设计 | bytebufferpool 源码分析">高性能字节池设计 | bytebufferpool 源码分析</a></li><li><a href=https://maolonglong.github.io/post/golang/queue/ title=无锁队列的简单实现>无锁队列的简单实现</a></li><li><a href=https://maolonglong.github.io/post/blockchain/cryptographic-hash-functions/ title="比特币笔记 —— 哈希函数">比特币笔记 —— 哈希函数</a></li><li><a href=https://maolonglong.github.io/post/golang/unsafe/ title="Unsafe Go">Unsafe Go</a></li><li><a href=https://maolonglong.github.io/post/%E7%94%9F%E6%B4%BB/%E6%96%B0%E7%9A%84%E5%BC%80%E5%A7%8B/ title=新的开始>新的开始</a></li><li><a href=https://maolonglong.github.io/post/java/reentrant-lock/ title="【Java 并发】重入锁（ReentrantLock）">【Java 并发】重入锁（ReentrantLock）</a></li><li><a href=https://maolonglong.github.io/post/java/volatile/ title="【Java 并发】volatile 关键字基本理解与使用">【Java 并发】volatile 关键字基本理解与使用</a></li></ul></section><section class=widget><h3 class=widget-title><a href=/categories/>分类</a></h3><ul class=widget-list><li><a href=https://maolonglong.github.io/categories/Golang/>Golang (3)</a></li><li><a href=https://maolonglong.github.io/categories/Java/>Java (2)</a></li><li><a href=https://maolonglong.github.io/categories/%E5%8C%BA%E5%9D%97%E9%93%BE/>区块链 (1)</a></li><li><a href=https://maolonglong.github.io/categories/%E7%94%9F%E6%B4%BB/>生活 (1)</a></li></ul></section><section class=widget><h3 class=widget-title><a href=/tags/>标签</a></h3><div class=tagcloud><a href=https://maolonglong.github.io/tags/Bitcoin/>Bitcoin</a>
+<a href=https://maolonglong.github.io/tags/CAS/>CAS</a>
+<a href=https://maolonglong.github.io/tags/Pool/>Pool</a>
+<a href=https://maolonglong.github.io/tags/ReentrantLock/>ReentrantLock</a>
+<a href=https://maolonglong.github.io/tags/SHA256/>SHA256</a>
+<a href=https://maolonglong.github.io/tags/unsafe/>unsafe</a>
+<a href=https://maolonglong.github.io/tags/volatile/>volatile</a>
+<a href=https://maolonglong.github.io/tags/%E5%AE%9E%E4%B9%A0/>实习</a>
+<a href=https://maolonglong.github.io/tags/%E5%B9%B6%E5%8F%91/>并发</a>
+<a href=https://maolonglong.github.io/tags/%E7%AB%9E%E8%B5%9B/>竞赛</a></div></section><section class=widget><h3 class=widget-title>其它</h3><ul class=widget-list><li><a href=https://maolonglong.github.io/index.xml>文章 RSS</a></li></ul></section></div></div></div></div></body></html>
