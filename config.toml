@@ -61,7 +61,7 @@ disqusShortname = ""  ## 是否开启disqus评论，不要和utteranc同时开�
 [[params.ads]]
   title = "我在使用不限速「阿里云盘」，赠送你 500GB 快来试试吧 🎉"
   url = "https://pages.aliyundrive.com/mobile-page/web/beinvited.html?code=0d9686e"
-  img = "aliyundrive.png"
+  img = "/aliyundrive.png"
 # [[params.ads]]
 #   title = "助力产业智慧升级，云服务器首年88元起，更有千元代金券礼包免费领！"
 #   url = "https://cloud.tencent.com/act/cps/redirect?redirect=1048&cps_key=14ff722692ac784fa8c3301c8c28d924&from=console"
