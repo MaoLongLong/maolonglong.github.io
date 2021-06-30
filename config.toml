@@ -58,10 +58,10 @@ disqusShortname = ""  ## 是否开启disqus评论，不要和utteranc同时开�
 #   url = "http://yuedu.baidu.com/ebook/14a722970740be1e640e9a3e"
 
 ## 侧边栏广告位
-# [[params.ads]]
-#   title = "【2019双12】ALL IN CLoud 低至1折"
-#   url = "https://www.aliyun.com/minisite/goods?userCode=jdg9oj97&share_source=copy_link"
-#   img = "https://img.alicdn.com/tfs/TB1_rYHo7P2gK0jSZPxXXacQpXa-690-388.jpg"
+[[params.ads]]
+  title = "我在使用不限速「阿里云盘」，赠送你 500GB 快来试试吧 🎉"
+  url = "https://pages.aliyundrive.com/mobile-page/web/beinvited.html?code=0d9686e"
+  img = "aliyundrive.png"
 # [[params.ads]]
 #   title = "助力产业智慧升级，云服务器首年88元起，更有千元代金券礼包免费领！"
 #   url = "https://cloud.tencent.com/act/cps/redirect?redirect=1048&cps_key=14ff722692ac784fa8c3301c8c28d924&from=console"
