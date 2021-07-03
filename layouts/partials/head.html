@@ -49,6 +49,17 @@
     <script data-ad-client="{{ .Site.Params.googleAd }}" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
     {{ end }}
 
+    <script>
+        var _hmt = _hmt || [];
+        (function() {
+        var hm = document.createElement("script");
+        hm.src = "https://hm.baidu.com/hm.js?b88ba8bad63352d4213631c01bab502f";
+        var s = document.getElementsByTagName("script")[0];
+        s.parentNode.insertBefore(hm, s);
+        })();
+    </script>
+
+
     {{if .Site.Params.fancybox }}
         <link href="https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.css" rel="stylesheet">
     {{ end }}

@@ -55,9 +55,9 @@ func WithIntArg(i int) Option {
 	}
 }
 
-func Method(opt ...Option) {
+func Method(opts ...Option) {
 	args := defaultArgs
-	for _, o := range opt {
+	for _, o := range opts {
 		o(&args)
 	}
 	fmt.Printf("%#v\n", args)
