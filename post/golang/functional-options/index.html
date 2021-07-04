@@ -93,9 +93,9 @@
 	}
 }
 
-<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>Method</span>(opt <span style=color:#000;font-weight:700>...</span>Option) {
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>Method</span>(opts <span style=color:#000;font-weight:700>...</span>Option) {
 	args <span style=color:#000;font-weight:700>:=</span> defaultArgs
-	<span style=color:#000;font-weight:700>for</span> _, o <span style=color:#000;font-weight:700>:=</span> <span style=color:#000;font-weight:700>range</span> opt {
+	<span style=color:#000;font-weight:700>for</span> _, o <span style=color:#000;font-weight:700>:=</span> <span style=color:#000;font-weight:700>range</span> opts {
 		<span style=color:#900;font-weight:700>o</span>(<span style=color:#000;font-weight:700>&amp;</span>args)
 	}
 	fmt.<span style=color:#900;font-weight:700>Printf</span>(<span style=color:#d14>&#34;%#v\n&#34;</span>, args)
