@@ -287,4 +287,4 @@ func (g *Group) Run() error {
 }
 ```
 
-> 类似的项目还有 [tomb](https://github.com/go-tomb/tomb/tree/v2) 和 [errgroup](https://cs.opensource.google/go/x/sync/+/master:errgroup/errgroup.go)
+> 类似的项目还有 [tomb](https://github.com/go-tomb/tomb/tree/v2) 和 [errgroup](https://github.com/golang/sync/blob/master/errgroup/errgroup.go)
