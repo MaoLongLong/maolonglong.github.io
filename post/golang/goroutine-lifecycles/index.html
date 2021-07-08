@@ -1,7 +1,7 @@
 <!doctype html><html lang=zh-cn><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1"><title>goroutine 生命周期的管理 | 毛珑珑的博客</title><meta property="og:title" content="goroutine 生命周期的管理 - 毛珑珑的博客"><meta property="og:type" content="article"><meta property="article:published_time" content="2021-07-07T17:15:08+08:00"><meta property="article:modified_time" content="2021-07-07T17:15:08+08:00"><meta name=Keywords content><meta name=description content="goroutine 生命周期的管理"><meta name=author content="毛珑珑"><meta property="og:url" content="https://maolonglong.tech/post/golang/goroutine-lifecycles/"><link rel=apple-touch-icon sizes=180x180 href=/apple-touch-icon.png><link rel=icon type=image/png sizes=32x32 href=/favicon-32x32.png><link rel=icon type=image/png sizes=16x16 href=/favicon-16x16.png><link rel=manifest href=/site.webmanifest><link rel=stylesheet href=/css/normalize.css><link rel=stylesheet href=/css/style.css><script type=text/javascript src=//cdn.bootcdn.net/ajax/libs/jquery/3.4.1/jquery.min.js></script><script>var _hmt=_hmt||[];(function(){var a=document.createElement("script"),b;a.src="https://hm.baidu.com/hm.js?b88ba8bad63352d4213631c01bab502f",b=document.getElementsByTagName("script")[0],b.parentNode.insertBefore(a,b)})()</script><link href=https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.css rel=stylesheet></head><body><header id=header class=clearfix><div class=container><div class=col-group><div class=site-name><a id=logo href=https://maolonglong.tech>毛珑珑的博客</a><p class=description>只有非常努力，才能显得毫不费力</p></div><div><nav id=nav-menu class=clearfix><a class=current href=https://maolonglong.tech>首页</a>
 <a href=https://maolonglong.tech/archives/ title=归档>归档</a>
-<a href=https://maolonglong.tech/about/ title=关于>关于</a></nav></div></div></div></header><div id=body><div class=container><div class=col-group><div class=col-8 id=main><div class=res-cons><article class=post><header><h1 class=post-title>goroutine 生命周期的管理</h1></header><date class="post-meta meta-date">2021年7月7日</date><div class=post-meta><span>|</span>
-<span class=meta-category><a href=/categories/Golang>Golang</a></span></div><div class=post-content><h2 id=标准库-context-包>标准库 context 包</h2><p>标准库的 context 包中主要就是几种控制 goroutine 生命周期的方法：</p><ul><li><code>WithCancel</code>: 手动控制结束</li><li><code>WithTimeout</code>: 指定超时时间后结束</li><li><code>WithDeadline</code>: 指定时间结束</li></ul><p>下面的样例演示了生成特定随机数后<strong>手动结束</strong> goroutine 的操作，它会随机打印几次 &ldquo;running&mldr;&rdquo;</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+<a href=https://maolonglong.tech/about/ title=关于>关于</a></nav></div></div></div></header><div id=body><div class=container><div class=col-group><div class=col-8 id=main><div class=res-cons><style type=text/css>.post-toc{position:fixed;width:200px;margin-left:-210px;padding:5px 10px;font-family:Athelas,STHeiti,Microsoft Yahei,serif;font-size:12px;border:1px solid rgba(0,0,0,7%);border-radius:5px;background-color:rgba(255,255,255,.98);background-clip:padding-box;-webkit-box-shadow:1px 1px 2px rgba(0,0,0,.125);box-shadow:1px 1px 2px rgba(0,0,0,.125);word-wrap:break-word;white-space:nowrap;-webkit-box-sizing:border-box;box-sizing:border-box;z-index:999;cursor:pointer;max-height:70%;overflow-y:auto;overflow-x:hidden}.post-toc .post-toc-title{width:100%;margin:0 auto;font-size:20px;font-weight:400;text-transform:uppercase;text-align:center}.post-toc .post-toc-content{font-size:15px}.post-toc .post-toc-content>nav>ul{margin:10px 0}.post-toc .post-toc-content ul{padding-left:20px;list-style:square;margin:.5em;line-height:1.8em}.post-toc .post-toc-content ul ul{padding-left:15px;display:none}@media print,screen and (max-width:1057px){.post-toc{display:none}}</style><div class=post-toc style=position:absolute;top:188px><h2 class=post-toc-title>文章目录</h2><div class=post-toc-content><nav id=TableOfContents><ul><li><a href=#标准库-context-包>标准库 context 包</a></li><li><a href=#复杂调度>复杂调度</a></li><li><a href=#errgroup>errgroup</a><ul><li><a href=#获取-goroutine-产生的错误>获取 goroutine 产生的错误</a></li><li><a href=#整合-context-实现-goroutine-的停止>整合 context 实现 goroutine 的停止</a></li></ul></li><li><a href=#oklogrun>oklog/run</a><ul><li><a href=#样例分析>样例分析</a></li><li><a href=#源码分析>源码分析</a></li></ul></li><li><a href=#tomb>tomb</a></li></ul></nav></div></div><script type=text/javascript>$(document).ready(function(){var a=$(".post-toc"),b,c,d;a.length&&(b=$("#main").offset().left,b<220&&a.css({width:b-10,"margin-left":0-b}),c=a.offset().top-20,d={start:{position:"absolute",top:c},process:{position:"fixed",top:20}},$(window).scroll(function(){var b=$(window).scrollTop();b<c?a.css(d.start):a.css(d.process)}))})</script><article class=post><header><h1 class=post-title>goroutine 生命周期的管理</h1></header><date class="post-meta meta-date">2021年7月7日</date><div class=post-meta><span>|</span>
+<span class=meta-category><a href=/categories/Golang>Golang</a></span></div><div class=clear style=display:none><div class=toc-article><div class=toc-title>文章目录</div></div></div><div class=post-content><h2 id=标准库-context-包>标准库 context 包</h2><p>标准库的 context 包中主要就是几种控制 goroutine 生命周期的方法：</p><ul><li><code>WithCancel</code>: 手动控制结束</li><li><code>WithTimeout</code>: 指定超时时间后结束</li><li><code>WithDeadline</code>: 指定时间结束</li></ul><p>下面的样例演示了生成特定随机数后<strong>手动结束</strong> goroutine 的操作，它会随机打印几次 &ldquo;running&mldr;&rdquo;</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
@@ -207,7 +207,147 @@
 
 	<span style=color:#998;font-style:italic>// ......
 </span><span style=color:#998;font-style:italic></span>}
-</code></pre></td></tr></table></div></div><h2 id=复杂调度>复杂调度</h2><p><a data-fancybox=gallery href=https://cdn.jsdelivr.net/gh/MaoLongLong/maolonglong.github.io@gh-pages/post/golang/goroutine-lifecycles/images/youtube_LHe1Cb_Ud_M.png><img class=mx-auto alt src=https://cdn.jsdelivr.net/gh/MaoLongLong/maolonglong.github.io@gh-pages/post/golang/goroutine-lifecycles/images/youtube_LHe1Cb_Ud_M.png></a></p><p>试想一种场景：一个程序由多个服务组成。其中一个服务由于某种原因关闭后，同时也要让其他正常运行的服务关闭。并且它们都需要监听键盘事件，在按下 Ctrl-C 时退出。</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</code></pre></td></tr></table></div></div><h2 id=复杂调度>复杂调度</h2><p>接下来要介绍 3 个库，它们功能类似，但是侧重点不同</p><ul><li><a href=https://github.com/golang/sync/blob/master/errgroup/errgroup.go>errgroup</a> 关注错误接收和发生错误后的撤销操作</li><li><a href=https://github.com/oklog/run>oklog/run</a> 能组合多个服务，形成一个整体，一同运行，一同结束</li><li><a href=https://github.com/go-tomb/tomb/tree/v2>tomb</a> 就像它的名字一样（坟墓），它侧重于如何“杀死” goroutine</li></ul><h2 id=errgroup>errgroup</h2><p><code>sync.WaitGroup</code> 能阻塞等待一组 goroutine 运行结束。<code>golang.org/x/sync/errgroup</code> 提供的 errgroup 对普通 wait group 做了些增强：</p><h3 id=获取-goroutine-产生的错误>获取 goroutine 产生的错误</h3><p>只能获取第一个产生的错误（因为执行顺序不确定，所以可能是 error a 也可能是 error b）</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>package</span> main
+
+<span style=color:#000;font-weight:700>import</span> (
+	<span style=color:#d14>&#34;errors&#34;</span>
+	<span style=color:#d14>&#34;log&#34;</span>
+
+	<span style=color:#d14>&#34;golang.org/x/sync/errgroup&#34;</span>
+)
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>main</span>() {
+	<span style=color:#000;font-weight:700>var</span> g errgroup.Group
+
+	g.<span style=color:#900;font-weight:700>Go</span>(<span style=color:#000;font-weight:700>func</span>() <span style=color:#458;font-weight:700>error</span> {
+		<span style=color:#998;font-style:italic>// do something...
+</span><span style=color:#998;font-style:italic></span>
+		<span style=color:#000;font-weight:700>return</span> <span style=color:#000;font-weight:700>nil</span>
+	})
+	g.<span style=color:#900;font-weight:700>Go</span>(<span style=color:#000;font-weight:700>func</span>() <span style=color:#458;font-weight:700>error</span> {
+		<span style=color:#998;font-style:italic>// do something...
+</span><span style=color:#998;font-style:italic></span>
+		<span style=color:#000;font-weight:700>return</span> errors.<span style=color:#900;font-weight:700>New</span>(<span style=color:#d14>&#34;error a&#34;</span>)
+	})
+	g.<span style=color:#900;font-weight:700>Go</span>(<span style=color:#000;font-weight:700>func</span>() <span style=color:#458;font-weight:700>error</span> {
+		<span style=color:#998;font-style:italic>// do something...
+</span><span style=color:#998;font-style:italic></span>
+		<span style=color:#000;font-weight:700>return</span> errors.<span style=color:#900;font-weight:700>New</span>(<span style=color:#d14>&#34;error b&#34;</span>)
+	})
+
+	<span style=color:#000;font-weight:700>if</span> err <span style=color:#000;font-weight:700>:=</span> g.<span style=color:#900;font-weight:700>Wait</span>(); err <span style=color:#000;font-weight:700>!=</span> <span style=color:#000;font-weight:700>nil</span> {
+		log.<span style=color:#900;font-weight:700>Println</span>(<span style=color:#d14>&#34;err:&#34;</span>, err)
+	}
+}
+</code></pre></td></tr></table></div></div><h3 id=整合-context-实现-goroutine-的停止>整合 context 实现 goroutine 的停止</h3><p>第一个错误产生后，errgroup 就会调用 ctx 的 <code>cancel()</code> 方法通知 goroutine 作出相应操作。</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">36
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">37
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">38
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>package</span> main
+
+<span style=color:#000;font-weight:700>import</span> (
+	<span style=color:#d14>&#34;context&#34;</span>
+	<span style=color:#d14>&#34;errors&#34;</span>
+	<span style=color:#d14>&#34;log&#34;</span>
+	<span style=color:#d14>&#34;time&#34;</span>
+
+	<span style=color:#d14>&#34;golang.org/x/sync/errgroup&#34;</span>
+)
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>main</span>() {
+	g, ctx <span style=color:#000;font-weight:700>:=</span> errgroup.<span style=color:#900;font-weight:700>WithContext</span>(context.<span style=color:#900;font-weight:700>Background</span>())
+
+	g.<span style=color:#900;font-weight:700>Go</span>(<span style=color:#000;font-weight:700>func</span>() <span style=color:#458;font-weight:700>error</span> {
+		log.<span style=color:#900;font-weight:700>Println</span>(<span style=color:#d14>&#34;goroutine a start...&#34;</span>)
+		<span style=color:#000;font-weight:700>&lt;-</span>ctx.<span style=color:#900;font-weight:700>Done</span>()
+		log.<span style=color:#900;font-weight:700>Println</span>(<span style=color:#d14>&#34;goroutine a stop&#34;</span>)
+		<span style=color:#000;font-weight:700>return</span> <span style=color:#000;font-weight:700>nil</span>
+	})
+	g.<span style=color:#900;font-weight:700>Go</span>(<span style=color:#000;font-weight:700>func</span>() <span style=color:#458;font-weight:700>error</span> {
+		log.<span style=color:#900;font-weight:700>Println</span>(<span style=color:#d14>&#34;goroutine b start...&#34;</span>)
+		time.<span style=color:#900;font-weight:700>Sleep</span>(<span style=color:#099>2</span> <span style=color:#000;font-weight:700>*</span> time.Second)
+		log.<span style=color:#900;font-weight:700>Println</span>(<span style=color:#d14>&#34;goroutine b return some error&#34;</span>)
+		<span style=color:#000;font-weight:700>return</span> errors.<span style=color:#900;font-weight:700>New</span>(<span style=color:#d14>&#34;error b&#34;</span>)
+	})
+
+	<span style=color:#000;font-weight:700>if</span> err <span style=color:#000;font-weight:700>:=</span> g.<span style=color:#900;font-weight:700>Wait</span>(); err <span style=color:#000;font-weight:700>!=</span> <span style=color:#000;font-weight:700>nil</span> {
+		log.<span style=color:#900;font-weight:700>Println</span>(<span style=color:#d14>&#34;err:&#34;</span>, err)
+	}
+
+	<span style=color:#998;font-style:italic>// Output:
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#998;font-style:italic>// 2021/07/08 10:11:05 goroutine b start...
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#998;font-style:italic>// 2021/07/08 10:11:05 goroutine a start...
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#998;font-style:italic>// 2021/07/08 10:11:07 goroutine b return some error
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#998;font-style:italic>// 2021/07/08 10:11:07 goroutine a stop
+</span><span style=color:#998;font-style:italic></span>	<span style=color:#998;font-style:italic>// 2021/07/08 10:11:07 err: error b
+</span><span style=color:#998;font-style:italic></span>}
+</code></pre></td></tr></table></div></div><h2 id=oklogrun>oklog/run</h2><h3 id=样例分析>样例分析</h3><p><a data-fancybox=gallery href=https://cdn.jsdelivr.net/gh/MaoLongLong/maolonglong.github.io@gh-pages/post/golang/goroutine-lifecycles/images/youtube_LHe1Cb_Ud_M.png><img class=mx-auto alt src=https://cdn.jsdelivr.net/gh/MaoLongLong/maolonglong.github.io@gh-pages/post/golang/goroutine-lifecycles/images/youtube_LHe1Cb_Ud_M.png></a></p><p>试想一种场景：一个程序由多个服务组成。其中一个服务由于某种原因关闭后，同时也要让其他服务关闭。而且它们都需要监听键盘事件，在按下 Ctrl-C 时退出。</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
@@ -217,10 +357,10 @@
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">8
 </span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go>ctx, cancel <span style=color:#000;font-weight:700>:=</span> context.<span style=color:#900;font-weight:700>WithCancel</span>(context.<span style=color:#900;font-weight:700>Background</span>())
 
-<span style=color:#000;font-weight:700>go</span> <span style=color:#900;font-weight:700>StorageService</span>()
-<span style=color:#000;font-weight:700>go</span> <span style=color:#900;font-weight:700>StateMachine</span>()
-<span style=color:#000;font-weight:700>go</span> <span style=color:#900;font-weight:700>HttpApi</span>()
-<span style=color:#000;font-weight:700>go</span> <span style=color:#900;font-weight:700>CronService</span>()
+<span style=color:#000;font-weight:700>go</span> <span style=color:#900;font-weight:700>StorageService</span>(ctx)
+<span style=color:#000;font-weight:700>go</span> <span style=color:#900;font-weight:700>StateMachine</span>(ctx)
+<span style=color:#000;font-weight:700>go</span> <span style=color:#900;font-weight:700>HttpApi</span>(ctx)
+<span style=color:#000;font-weight:700>go</span> <span style=color:#900;font-weight:700>CronService</span>(ctx)
 
 <span style=color:#998;font-style:italic>// wait...
 </span></code></pre></td></tr></table></div></div><p>直接用 context 肯定能实现，但写起来确实让人头秃。我们可以借鉴一些已经封装好的库，其中之一就是 <a href=https://github.com/oklog/run>oklog/run</a>，它的核心代码只有 30 行左右。</p><p>先看简单的使用效果：</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
@@ -275,7 +415,6 @@
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">50
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">51
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">52
-</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">53
 </span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>package</span> main
 
 <span style=color:#000;font-weight:700>import</span> (
@@ -293,13 +432,12 @@
 <span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>main</span>() {
 
 	<span style=color:#000;font-weight:700>var</span> g run.Group
-	{
-		g.<span style=color:#900;font-weight:700>Add</span>(<span style=color:#900;font-weight:700>mockService</span>(<span style=color:#d14>&#34;Storage service&#34;</span>))
-		g.<span style=color:#900;font-weight:700>Add</span>(<span style=color:#900;font-weight:700>mockService</span>(<span style=color:#d14>&#34;State machine&#34;</span>))
-		g.<span style=color:#900;font-weight:700>Add</span>(<span style=color:#900;font-weight:700>mockService</span>(<span style=color:#d14>&#34;HTTP API&#34;</span>))
-		g.<span style=color:#900;font-weight:700>Add</span>(<span style=color:#900;font-weight:700>mockService</span>(<span style=color:#d14>&#34;Cron service&#34;</span>))
-		g.<span style=color:#900;font-weight:700>Add</span>(run.<span style=color:#900;font-weight:700>SignalHandler</span>(context.<span style=color:#900;font-weight:700>Background</span>()))
-	}
+
+	g.<span style=color:#900;font-weight:700>Add</span>(<span style=color:#900;font-weight:700>mockService</span>(<span style=color:#d14>&#34;Storage service&#34;</span>))
+	g.<span style=color:#900;font-weight:700>Add</span>(<span style=color:#900;font-weight:700>mockService</span>(<span style=color:#d14>&#34;State machine&#34;</span>))
+	g.<span style=color:#900;font-weight:700>Add</span>(<span style=color:#900;font-weight:700>mockService</span>(<span style=color:#d14>&#34;HTTP API&#34;</span>))
+	g.<span style=color:#900;font-weight:700>Add</span>(<span style=color:#900;font-weight:700>mockService</span>(<span style=color:#d14>&#34;Cron service&#34;</span>))
+	g.<span style=color:#900;font-weight:700>Add</span>(run.<span style=color:#900;font-weight:700>SignalHandler</span>(context.<span style=color:#900;font-weight:700>Background</span>()))
 
 	<span style=color:#000;font-weight:700>go</span> <span style=color:#900;font-weight:700>mockError</span>()
 
@@ -339,7 +477,7 @@
 2021/07/07 21:21:07 HTTP API stop, cause: HTTP API - mock error
 2021/07/07 21:21:07 Cron service stop, cause: HTTP API - mock error
 2021/07/07 21:21:07 run group err: HTTP API - mock error
-</code></pre><p>Run Group 把<strong>执行函数</strong>和<strong>中断函数</strong>封装成了一个 actor 结构体（中断函数需要让执行函数返回）</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
+</code></pre><h3 id=源码分析>源码分析</h3><p><strong>执行函数</strong>和<strong>中断函数</strong>封装成了一个 actor 结构体（中断函数需要让执行函数返回）</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">1
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">2
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">3
 </span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">4
@@ -417,7 +555,83 @@
 	<span style=color:#998;font-style:italic>// 返回得到的第一个 error
 </span><span style=color:#998;font-style:italic></span>	<span style=color:#000;font-weight:700>return</span> err
 }
-</code></pre></td></tr></table></div></div><blockquote><p>类似的项目还有 <a href=https://github.com/go-tomb/tomb/tree/v2>tomb</a> 和 <a href=https://github.com/golang/sync/blob/master/errgroup/errgroup.go>errgroup</a></p></blockquote></div><div class=post-archive><h2>See Also</h2><ul class=listing><li><a href=/post/golang/functional-options/>Go 函数选项模式（Functional Options）</a></li><li><a href=/post/golang/bytebufferpool/>高性能字节池设计 | bytebufferpool 源码分析</a></li><li><a href=/post/golang/queue/>无锁队列的简单实现</a></li><li><a href=/post/blockchain/cryptographic-hash-functions/>比特币笔记 —— 哈希函数</a></li><li><a href=/post/golang/unsafe/>Unsafe Go</a></li></ul></div><div class="post-meta meta-tags"><ul class=clearfix><li><a href=/tags/goroutine>goroutine</a></li></ul></div></article><div class="post bg-white"><script src=https://utteranc.es/client.js repo=MaoLongLong/maolonglong.github.io issue-term=pathname theme=github-light crossorigin=anonymous async></script></div></div><footer id=footer><div>&copy; 2021 <a href=https://maolonglong.tech>毛珑珑的博客 By 毛珑珑</a></div><br><div><div class=github-badge><a href=https://gohugo.io/ target=_black rel=nofollow><span class=badge-subject>Powered by</span><span class="badge-value bg-blue">Hugo</span></a></div><div class=github-badge><a href=https://www.flysnow.org/ target=_black><span class=badge-subject>Design by</span><span class="badge-value bg-brightgreen">飞雪无情</span></a></div><div class=github-badge><a href=https://github.com/flysnow-org/maupassant-hugo target=_black><span class=badge-subject>Theme</span><span class="badge-value bg-yellowgreen">Maupassant</span></a></div></div></footer><script type=text/javascript>window.MathJax={tex2jax:{inlineMath:[['$','$']],processEscapes:!0}}</script><script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML" async></script><script src=https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.js></script><a id=rocket href=#top></a><script type=text/javascript src="/js/totop.js?v=0.0.0" async></script></div><div id=secondary><section class=widget><form id=search action=https://maolonglong.tech/search/ method=get accept-charset=utf-8 target=_blank _lpchecked=1><input type=text name=q maxlength=20 placeholder=Search>
+</code></pre></td></tr></table></div></div><h2 id=tomb>tomb</h2><ul><li>Go 方法运行 goroutine</li><li>Kill 方法用指定 error 让 tomb 的运行状态转为 dying（濒死），所有 goroutine 真正返回后进入 dead 状态</li><li>Wait 一直阻塞到 tomb 转为 dead 状态</li></ul><p>乍一看 tomb 似乎和 <code>context.WithCancel</code> 差不多，但是要知道，tomb 诞生的时候 golang 标准库里还没有 context</p><div class=highlight><div style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><table style=border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block><tr><td style=vertical-align:top;padding:0;margin:0;border:0><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 1
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 2
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 3
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 4
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 5
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 6
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 7
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 8
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f"> 9
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">10
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">11
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">12
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">13
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">14
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">15
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">16
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">17
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">18
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">19
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">20
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">21
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">22
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">23
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">24
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">25
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">26
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">27
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">28
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">29
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">30
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">31
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">32
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">33
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">34
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">35
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">36
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">37
+</span><span style="margin-right:.4em;padding:0 .4em;color:#7f7f7f">38
+</span></code></pre></td><td style=vertical-align:top;padding:0;margin:0;border:0;width:100%><pre style=background-color:#fff;-moz-tab-size:4;-o-tab-size:4;tab-size:4><code class=language-go data-lang=go><span style=color:#000;font-weight:700>package</span> main
+
+<span style=color:#000;font-weight:700>import</span> (
+	<span style=color:#d14>&#34;log&#34;</span>
+	<span style=color:#d14>&#34;time&#34;</span>
+
+	<span style=color:#d14>&#34;gopkg.in/tomb.v2&#34;</span>
+)
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>task</span>(t <span style=color:#000;font-weight:700>*</span>tomb.Tomb, name <span style=color:#458;font-weight:700>string</span>) <span style=color:#000;font-weight:700>func</span>() <span style=color:#458;font-weight:700>error</span> {
+	<span style=color:#000;font-weight:700>return</span> <span style=color:#000;font-weight:700>func</span>() <span style=color:#458;font-weight:700>error</span> {
+		<span style=color:#000;font-weight:700>for</span> i <span style=color:#000;font-weight:700>:=</span> <span style=color:#099>0</span>; ; i<span style=color:#000;font-weight:700>++</span> {
+			<span style=color:#000;font-weight:700>select</span> {
+			<span style=color:#000;font-weight:700>case</span> <span style=color:#000;font-weight:700>&lt;-</span>t.<span style=color:#900;font-weight:700>Dying</span>():
+				<span style=color:#000;font-weight:700>return</span> tomb.ErrDying
+			<span style=color:#000;font-weight:700>default</span>:
+				time.<span style=color:#900;font-weight:700>Sleep</span>(time.Second)
+				log.<span style=color:#900;font-weight:700>Printf</span>(<span style=color:#d14>&#34;task %s: %d\n&#34;</span>, name, i)
+			}
+		}
+	}
+}
+
+<span style=color:#000;font-weight:700>func</span> <span style=color:#900;font-weight:700>main</span>() {
+	<span style=color:#000;font-weight:700>var</span> t tomb.Tomb
+
+	t.<span style=color:#900;font-weight:700>Go</span>(<span style=color:#900;font-weight:700>task</span>(<span style=color:#000;font-weight:700>&amp;</span>t, <span style=color:#d14>&#34;A&#34;</span>))
+	t.<span style=color:#900;font-weight:700>Go</span>(<span style=color:#900;font-weight:700>task</span>(<span style=color:#000;font-weight:700>&amp;</span>t, <span style=color:#d14>&#34;B&#34;</span>))
+
+	<span style=color:#000;font-weight:700>go</span> <span style=color:#000;font-weight:700>func</span>() {
+		time.<span style=color:#900;font-weight:700>Sleep</span>(<span style=color:#099>3</span> <span style=color:#000;font-weight:700>*</span> time.Second)
+		t.<span style=color:#900;font-weight:700>Kill</span>(<span style=color:#000;font-weight:700>nil</span>)
+	}()
+
+	<span style=color:#000;font-weight:700>if</span> err <span style=color:#000;font-weight:700>:=</span> t.<span style=color:#900;font-weight:700>Wait</span>(); err <span style=color:#000;font-weight:700>!=</span> <span style=color:#000;font-weight:700>nil</span> {
+		log.<span style=color:#900;font-weight:700>Println</span>(<span style=color:#d14>&#34;err:&#34;</span>, err)
+	}
+}
+</code></pre></td></tr></table></div></div></div><div class=post-archive><h2>See Also</h2><ul class=listing><li><a href=/post/golang/functional-options/>Go 函数选项模式（Functional Options）</a></li><li><a href=/post/golang/bytebufferpool/>高性能字节池设计 | bytebufferpool 源码分析</a></li><li><a href=/post/golang/queue/>无锁队列的简单实现</a></li><li><a href=/post/blockchain/cryptographic-hash-functions/>比特币笔记 —— 哈希函数</a></li><li><a href=/post/golang/unsafe/>Unsafe Go</a></li></ul></div><div class="post-meta meta-tags"><ul class=clearfix><li><a href=/tags/goroutine>goroutine</a></li></ul></div></article><div class="post bg-white"><script src=https://utteranc.es/client.js repo=MaoLongLong/maolonglong.github.io issue-term=pathname theme=github-light crossorigin=anonymous async></script></div></div><footer id=footer><div>&copy; 2021 <a href=https://maolonglong.tech>毛珑珑的博客 By 毛珑珑</a></div><br><div><div class=github-badge><a href=https://gohugo.io/ target=_black rel=nofollow><span class=badge-subject>Powered by</span><span class="badge-value bg-blue">Hugo</span></a></div><div class=github-badge><a href=https://www.flysnow.org/ target=_black><span class=badge-subject>Design by</span><span class="badge-value bg-brightgreen">飞雪无情</span></a></div><div class=github-badge><a href=https://github.com/flysnow-org/maupassant-hugo target=_black><span class=badge-subject>Theme</span><span class="badge-value bg-yellowgreen">Maupassant</span></a></div></div></footer><script type=text/javascript>window.MathJax={tex2jax:{inlineMath:[['$','$']],processEscapes:!0}}</script><script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML" async></script><script src=https://cdn.bootcdn.net/ajax/libs/fancybox/3.5.7/jquery.fancybox.min.js></script><a id=rocket href=#top></a><script type=text/javascript src="/js/totop.js?v=0.0.0" async></script></div><div id=secondary><section class=widget><form id=search action=https://maolonglong.tech/search/ method=get accept-charset=utf-8 target=_blank _lpchecked=1><input type=text name=q maxlength=20 placeholder=Search>
 <input type=hidden name=sitesearch value=https://maolonglong.tech>
 <button type=submit class="submit icon-search"></button></form></section><section class=widget><h3 class=widget-title>最近文章</h3><ul class=widget-list><li><a href=https://maolonglong.tech/post/golang/goroutine-lifecycles/ title="goroutine 生命周期的管理">goroutine 生命周期的管理</a></li><li><a href=https://maolonglong.tech/post/golang/functional-options/ title="Go 函数选项模式（Functional Options）">Go 函数选项模式（Functional Options）</a></li><li><a href=https://maolonglong.tech/post/golang/bytebufferpool/ title="高性能字节池设计 | bytebufferpool 源码分析">高性能字节池设计 | bytebufferpool 源码分析</a></li><li><a href=https://maolonglong.tech/post/golang/queue/ title=无锁队列的简单实现>无锁队列的简单实现</a></li><li><a href=https://maolonglong.tech/post/blockchain/cryptographic-hash-functions/ title="比特币笔记 —— 哈希函数">比特币笔记 —— 哈希函数</a></li><li><a href=https://maolonglong.tech/post/golang/unsafe/ title="Unsafe Go">Unsafe Go</a></li><li><a href=https://maolonglong.tech/post/%E7%94%9F%E6%B4%BB/%E6%96%B0%E7%9A%84%E5%BC%80%E5%A7%8B/ title=新的开始>新的开始</a></li><li><a href=https://maolonglong.tech/post/java/reentrant-lock/ title="【Java 并发】重入锁（ReentrantLock）">【Java 并发】重入锁（ReentrantLock）</a></li><li><a href=https://maolonglong.tech/post/java/volatile/ title="【Java 并发】volatile 关键字基本理解与使用">【Java 并发】volatile 关键字基本理解与使用</a></li></ul></section><section class=widget><h3 class=widget-title style=color:red>福利派送</h3><ul class=widget-list><li><a href="https://pages.aliyundrive.com/mobile-page/web/beinvited.html?code=0d9686e" title="我在使用不限速「阿里云盘」，赠送你 500GB 快来试试吧 🎉" target=_blank style=color:red><img src=/aliyundrive.png></a></li></ul></section><section class=widget><h3 class=widget-title><a href=/categories/>分类</a></h3><ul class=widget-list><li><a href=https://maolonglong.tech/categories/Golang/>Golang (5)</a></li><li><a href=https://maolonglong.tech/categories/Java/>Java (2)</a></li><li><a href=https://maolonglong.tech/categories/%E5%8C%BA%E5%9D%97%E9%93%BE/>区块链 (1)</a></li><li><a href=https://maolonglong.tech/categories/%E7%94%9F%E6%B4%BB/>生活 (1)</a></li></ul></section><section class=widget><h3 class=widget-title><a href=/tags/>标签</a></h3><div class=tagcloud><a href=https://maolonglong.tech/tags/Bitcoin/>Bitcoin</a>
 <a href=https://maolonglong.tech/tags/CAS/>CAS</a>
