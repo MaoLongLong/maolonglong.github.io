@@ -2,6 +2,7 @@
 title: 'goroutine 生命周期的管理'
 date: 2021-07-07T17:15:08+08:00
 draft: false
+toc: true
 categories:
   - Golang
 tags:
@@ -138,17 +139,115 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 
 ## 复杂调度
 
+接下来要介绍 3 个库，它们功能类似，但是侧重点不同
+
+- [errgroup](https://github.com/golang/sync/blob/master/errgroup/errgroup.go) 关注错误接收和发生错误后的撤销操作
+- [oklog/run](https://github.com/oklog/run) 能组合多个服务，形成一个整体，一同运行，一同结束
+- [tomb](https://github.com/go-tomb/tomb/tree/v2) 就像它的名字一样（坟墓），它侧重于如何“杀死” goroutine
+
+## errgroup
+
+`sync.WaitGroup` 能阻塞等待一组 goroutine 运行结束。`golang.org/x/sync/errgroup` 提供的 errgroup 对普通 wait group 做了些增强：
+
+### 获取 goroutine 产生的错误
+
+只能获取第一个产生的错误（因为执行顺序不确定，所以可能是 error a 也可能是 error b）
+
+```go
+package main
+
+import (
+	"errors"
+	"log"
+
+	"golang.org/x/sync/errgroup"
+)
+
+func main() {
+	var g errgroup.Group
+
+	g.Go(func() error {
+		// do something...
+
+		return nil
+	})
+	g.Go(func() error {
+		// do something...
+
+		return errors.New("error a")
+	})
+	g.Go(func() error {
+		// do something...
+
+		return errors.New("error b")
+	})
+
+	if err := g.Wait(); err != nil {
+		log.Println("err:", err)
+	}
+}
+```
+
+### 整合 context 实现 goroutine 的停止
+
+第一个错误产生后，errgroup 就会调用 ctx 的 `cancel()` 方法通知 goroutine 作出相应操作。
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"log"
+	"time"
+
+	"golang.org/x/sync/errgroup"
+)
+
+func main() {
+	g, ctx := errgroup.WithContext(context.Background())
+
+	g.Go(func() error {
+		log.Println("goroutine a start...")
+		<-ctx.Done()
+		log.Println("goroutine a stop")
+		return nil
+	})
+	g.Go(func() error {
+		log.Println("goroutine b start...")
+		time.Sleep(2 * time.Second)
+		log.Println("goroutine b return some error")
+		return errors.New("error b")
+	})
+
+	if err := g.Wait(); err != nil {
+		log.Println("err:", err)
+	}
+
+	// Output:
+	// 2021/07/08 10:11:05 goroutine b start...
+	// 2021/07/08 10:11:05 goroutine a start...
+	// 2021/07/08 10:11:07 goroutine b return some error
+	// 2021/07/08 10:11:07 goroutine a stop
+	// 2021/07/08 10:11:07 err: error b
+}
+```
+
+## oklog/run
+
+### 样例分析
+
 ![](./images/youtube_LHe1Cb_Ud_M.png)
 
-试想一种场景：一个程序由多个服务组成。其中一个服务由于某种原因关闭后，同时也要让其他正常运行的服务关闭。并且它们都需要监听键盘事件，在按下 Ctrl-C 时退出。
+试想一种场景：一个程序由多个服务组成。其中一个服务由于某种原因关闭后，同时也要让其他服务关闭。而且它们都需要监听键盘事件，在按下 Ctrl-C 时退出。
 
 ```go
 ctx, cancel := context.WithCancel(context.Background())
 
-go StorageService()
-go StateMachine()
-go HttpApi()
-go CronService()
+go StorageService(ctx)
+go StateMachine(ctx)
+go HttpApi(ctx)
+go CronService(ctx)
 
 // wait...
 ```
@@ -175,13 +274,12 @@ var errCh = make(chan error)
 func main() {
 
 	var g run.Group
-	{
-		g.Add(mockService("Storage service"))
-		g.Add(mockService("State machine"))
-		g.Add(mockService("HTTP API"))
-		g.Add(mockService("Cron service"))
-		g.Add(run.SignalHandler(context.Background()))
-	}
+
+	g.Add(mockService("Storage service"))
+	g.Add(mockService("State machine"))
+	g.Add(mockService("HTTP API"))
+	g.Add(mockService("Cron service"))
+	g.Add(run.SignalHandler(context.Background()))
 
 	go mockError()
 
@@ -228,7 +326,9 @@ func mockError() {
 2021/07/07 21:21:07 run group err: HTTP API - mock error
 ```
 
-Run Group 把**执行函数**和**中断函数**封装成了一个 actor 结构体（中断函数需要让执行函数返回）
+### 源码分析
+
+**执行函数**和**中断函数**封装成了一个 actor 结构体（中断函数需要让执行函数返回）
 
 ```go
 type actor struct {
@@ -287,4 +387,51 @@ func (g *Group) Run() error {
 }
 ```
 
-> 类似的项目还有 [tomb](https://github.com/go-tomb/tomb/tree/v2) 和 [errgroup](https://github.com/golang/sync/blob/master/errgroup/errgroup.go)
+## tomb
+
+- Go 方法运行 goroutine
+- Kill 方法用指定 error 让 tomb 的运行状态转为 dying（濒死），所有 goroutine 真正返回后进入 dead 状态
+- Wait 一直阻塞到 tomb 转为 dead 状态
+
+乍一看 tomb 似乎和 `context.WithCancel` 差不多，但是要知道，tomb 诞生的时候 golang 标准库里还没有 context
+
+```go
+package main
+
+import (
+	"log"
+	"time"
+
+	"gopkg.in/tomb.v2"
+)
+
+func task(t *tomb.Tomb, name string) func() error {
+	return func() error {
+		for i := 0; ; i++ {
+			select {
+			case <-t.Dying():
+				return tomb.ErrDying
+			default:
+				time.Sleep(time.Second)
+				log.Printf("task %s: %d\n", name, i)
+			}
+		}
+	}
+}
+
+func main() {
+	var t tomb.Tomb
+
+	t.Go(task(&t, "A"))
+	t.Go(task(&t, "B"))
+
+	go func() {
+		time.Sleep(3 * time.Second)
+		t.Kill(nil)
+	}()
+
+	if err := t.Wait(); err != nil {
+		log.Println("err:", err)
+	}
+}
+```
